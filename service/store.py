@@ -2,10 +2,40 @@
 
 import os
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schema" / "schema.sql"
 SCHEMA_VERSION = 1
+
+# The one way events are written: re-reading a record never duplicates it, and only
+# a real content change (a correction, a session that grew) touches the row.
+UPSERT_EVENT = """
+INSERT INTO events (id, source_id, type, actor, project_id, occurred_at, utc_offset_min, ended_at, observed_at,
+                    title, payload, payload_ref, content_hash)
+VALUES (:id, :source_id, :type, :actor, :project_id, :occurred_at, :utc_offset_min, :ended_at, :observed_at,
+        :title, :payload, :payload_ref, :content_hash)
+ON CONFLICT (id) DO UPDATE SET
+    actor = excluded.actor, title = excluded.title, payload = excluded.payload, payload_ref = excluded.payload_ref,
+    project_id = excluded.project_id, occurred_at = excluded.occurred_at, ended_at = excluded.ended_at,
+    utc_offset_min = excluded.utc_offset_min, content_hash = excluded.content_hash,
+    changed_at = excluded.observed_at, gone_at = NULL
+WHERE events.content_hash <> excluded.content_hash OR events.gone_at IS NOT NULL
+"""
+
+
+def utc(ts):
+    """A Unix time as the store's UTC text, YYYY-MM-DDTHH:MM:SSZ."""
+    return datetime.fromtimestamp(int(ts), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def now():
+    return utc(datetime.now(timezone.utc).timestamp())
+
+
+def local_offset_min(ts):
+    """This machine's UTC offset, in minutes, at a Unix time (DST-aware)."""
+    return int(datetime.fromtimestamp(ts, timezone.utc).astimezone().utcoffset().total_seconds() // 60)
 
 
 def connect(path):

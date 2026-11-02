@@ -52,6 +52,14 @@ def main():
               and not app.exists() and not unit.exists())
         claude.write_text(json.dumps(original))
 
+        launcher = home / ".local" / "bin" / "pwi"
+        launcher.parent.mkdir(parents=True)
+        launcher.write_text("#!/bin/sh\necho someone else's pwi\n")
+        foreign = run()
+        check("an existing 'pwi' command that isn't ours stops the install and is left alone",
+              foreign.returncode == 1 and "isn't ours" in foreign.stderr and "someone else" in launcher.read_text())
+        launcher.unlink()
+
         first = run()
         check("install succeeds", first.returncode == 0)
         installed = {str(p.relative_to(app)) for p in app.rglob("*") if p.is_file()}
@@ -97,6 +105,16 @@ def main():
         check("the store is created in the data folder, outside the app folder",
               (home / "data" / "pwi" / "store.db").exists())
 
+        repo = home / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        added = subprocess.run([str(launcher), "add-repo", str(repo)], env=env, capture_output=True, text=True)
+        listed = subprocess.run([str(launcher), "sources"], env=env, capture_output=True, text=True)
+        check("the 'pwi' launcher runs the installed CLI: add-repo and sources work",
+              launcher.stat().st_mode & 0o111 and added.returncode == 0 and "as project 'repo'" in added.stdout
+              and listed.returncode == 0 and "repo" in listed.stdout and "claude_code" in listed.stdout)
+        check("first install says how to allowlist repositories", "add-repo" in first.stdout)
+
         before = claude.read_text()
         second = run()
         check("running install again succeeds and leaves the Claude Desktop config as it was",
@@ -106,8 +124,8 @@ def main():
 
         removed = run("--uninstall")
         config = json.loads(claude.read_text())
-        check("uninstall removes the unit, the code and the Claude Desktop entry",
-              removed.returncode == 0 and not unit.exists() and not app.exists()
+        check("uninstall removes the unit, the code, the 'pwi' command and the Claude Desktop entry",
+              removed.returncode == 0 and not unit.exists() and not app.exists() and not launcher.exists()
               and config["mcpServers"] == {"other": OTHER_SERVER})
         check("uninstall keeps the store", (home / "data" / "pwi" / "store.db").exists())
 

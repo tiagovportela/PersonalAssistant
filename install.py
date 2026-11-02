@@ -33,6 +33,9 @@ SERVER_NAME = "pwi"
 SPIKE = "pwi-spike"  # the Phase 0 spike's entry, replaced by this one
 BRIDGE = paths.APP_DIR / "service" / "bridge.py"
 SERVER = paths.APP_DIR / "service" / "server.py"
+CLI = paths.APP_DIR / "service" / "cli.py"
+LAUNCHER = paths.BIN_DIR / "pwi"
+LAUNCHER_MARK = "# installed by PersonalAssistant/install.py"
 
 
 def say(message):
@@ -66,6 +69,10 @@ def check_requirements(use_systemd):
         fail(f"this Python's SQLite ({sqlite3.sqlite_version}) can't create the store: {e}")
     if use_systemd and (not shutil.which("systemctl") or systemctl("show-environment", check=False).returncode):
         fail("systemd user services aren't available in this session.")
+    if not shutil.which("git"):
+        fail("git is needed to read repositories. Install it with: sudo apt install git")
+    if LAUNCHER.exists() and LAUNCHER_MARK not in LAUNCHER.read_text(encoding="utf-8", errors="replace"):
+        fail(f"{LAUNCHER} already exists and isn't ours. Move it aside, then run this again.")
     read_claude_config()  # fails now, before anything is installed, if the file is broken
 
 
@@ -121,6 +128,14 @@ def write_unit(python):
         "WantedBy=default.target\n",
         encoding="utf-8")
     say(f"systemd unit written to {UNIT_PATH}")
+
+
+def write_launcher(python):
+    """`pwi` on the PATH, so the CLI needs no path to remember."""
+    paths.BIN_DIR.mkdir(parents=True, exist_ok=True)
+    LAUNCHER.write_text(f'#!/bin/sh\n{LAUNCHER_MARK}\nexec "{python}" -I "{CLI}" "$@"\n', encoding="utf-8")
+    LAUNCHER.chmod(0o755)
+    say(f"command 'pwi' installed in {paths.BIN_DIR}")
 
 
 def start_service():
@@ -197,17 +212,26 @@ def install(use_systemd):
     commit = current_commit()
     copy_app(commit)
     write_unit(python)
+    write_launcher(python)
     if use_systemd:
         start_service()
     added = register_in_claude(python)
 
+    on_path = str(paths.BIN_DIR) in os.environ.get("PATH", "").split(os.pathsep)
+    pwi = "pwi" if on_path else str(LAUNCHER)
+    steps = ["Quit Claude Desktop completely (Ctrl+Q, or Quit from the tray icon) and open it again,\n"
+             "     so it loads the tool list. Closing the window isn't enough."]
+    if added:
+        steps.append("In Claude Desktop's tool permissions for 'pwi', set these to \"Ask every time\":\n"
+                     f"     {', '.join(sorted(APPROVAL))}. Set every other tool to \"Always allow\".")
+        steps.append(f"Allowlist the repositories to collect: {pwi} add-repo ~/path/to/repo ...")
     print(f"\nInstalled pwi{f' {commit}' if commit else ''} with Python {sys.version.split()[0]}.")
     print("Next:")
-    print("  1. Quit Claude Desktop completely (Ctrl+Q, or Quit from the tray icon) and open it again,")
-    print("     so it loads the tool list. Closing the window isn't enough.")
-    if added:
-        print("  2. In Claude Desktop's tool permissions for 'pwi', set these to \"Ask every time\":")
-        print(f"     {', '.join(sorted(APPROVAL))}. Set every other tool to \"Always allow\".")
+    for n, step in enumerate(steps, 1):
+        print(f"  {n}. {step}")
+    if not on_path:
+        print(f"'{paths.BIN_DIR}' isn't on your PATH in this terminal yet; after your next login, 'pwi' works on its own.")
+    print(f"Sources and their last collection: {pwi} sources")
     print("Logs: journalctl --user -u pwi -f")
 
 
@@ -222,8 +246,10 @@ def uninstall(use_systemd):
     if config.get("mcpServers", {}).pop(SERVER_NAME, None) is not None:
         write_claude_config(config)
         say(f"removed '{SERVER_NAME}' from {CLAUDE_CONFIG}")
+    if LAUNCHER.exists() and LAUNCHER_MARK in LAUNCHER.read_text(encoding="utf-8", errors="replace"):
+        LAUNCHER.unlink()
     shutil.rmtree(paths.APP_DIR, ignore_errors=True)
-    say(f"code removed from {paths.APP_DIR}")
+    say(f"code and the 'pwi' command removed")
     print(f"\nYour data is kept in {paths.DATA_DIR}. Delete that folder yourself if you no longer want it.")
     print("Quit and reopen Claude Desktop so it forgets the tools.")
 

@@ -6,25 +6,15 @@ Run: python3 -I test_schema.py
 import hashlib
 import json
 import sqlite3
+import sys
 from pathlib import Path
 
-SCHEMA = Path(__file__).resolve().with_name("schema.sql").read_text()
-NOW = "2026-11-02T17:00:00Z"
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "service"))
+from store import UPSERT_EVENT  # noqa: E402  the statement the collectors write with
 
-# The canonical ingest statement: re-reading a record never duplicates it, and only
-# a real content change (a correction) touches the row.
-UPSERT_EVENT = """
-INSERT INTO events (id, source_id, type, project_id, occurred_at, utc_offset_min, observed_at,
-                    title, payload, payload_ref, content_hash)
-VALUES (:id, :source_id, :type, :project_id, :occurred_at, :utc_offset_min, :observed_at,
-        :title, :payload, :payload_ref, :content_hash)
-ON CONFLICT (id) DO UPDATE SET
-    title = excluded.title, payload = excluded.payload, payload_ref = excluded.payload_ref,
-    project_id = excluded.project_id, occurred_at = excluded.occurred_at,
-    utc_offset_min = excluded.utc_offset_min, content_hash = excluded.content_hash,
-    changed_at = excluded.observed_at, gone_at = NULL
-WHERE events.content_hash <> excluded.content_hash OR events.gone_at IS NOT NULL
-"""
+SCHEMA = (HERE / "schema.sql").read_text()
+NOW = "2026-11-02T17:00:00Z"
 
 
 def check(label, condition):
@@ -44,9 +34,9 @@ def raises(db, sql, params=()):
 def event(sha, title, observed_at=NOW, occurred_at="2026-11-02T23:30:00Z", project="pwi", source_id=1):
     payload = json.dumps({"files_changed": 2})
     return {
-        "id": f"git:commit:{sha}", "source_id": source_id, "type": "git.commit", "project_id": project,
-        "occurred_at": occurred_at, "utc_offset_min": 60, "observed_at": observed_at,
-        "title": title, "payload": payload, "payload_ref": f"/home/tiago/Projects/PersonalAssistant@{sha}",
+        "id": f"git:commit:{sha}", "source_id": source_id, "type": "git.commit", "actor": "me", "project_id": project,
+        "occurred_at": occurred_at, "utc_offset_min": 60, "ended_at": None, "observed_at": observed_at,
+        "title": title, "payload": payload, "payload_ref": f"/repos/PersonalAssistant@{sha}",
         "content_hash": hashlib.sha256((title + payload).encode()).hexdigest(),
     }
 
@@ -64,8 +54,8 @@ def main():
     check("schema applies", db.execute("select version from schema_version").fetchone() == (1,))
 
     db.execute("insert into sources (id, kind, locator, name, added_at) values"
-               " (1, 'git_repo', '/home/tiago/Projects/PersonalAssistant', 'PersonalAssistant', ?),"
-               " (2, 'git_repo', '/home/tiago/Projects/Other', 'Other', ?)", (NOW, NOW))
+               " (1, 'git_repo', '/repos/PersonalAssistant', 'PersonalAssistant', ?),"
+               " (2, 'git_repo', '/repos/Other', 'Other', ?)", (NOW, NOW))
     db.execute("insert into projects (id, name, created_at) values ('pwi', 'Personal Work Intelligence', ?),"
                " ('secret', 'Secret project', ?)", (NOW, NOW))
 

@@ -20,12 +20,36 @@ import logging  # noqa: E402
 import os  # noqa: E402
 import platform  # noqa: E402
 import signal  # noqa: E402
+import time  # noqa: E402
 
+import collect  # noqa: E402
 import paths  # noqa: E402
 import store  # noqa: E402
 from handlers import VERSION, Layer, RpcError  # noqa: E402
 
 log = logging.getLogger("pwi")
+COLLECT_EVERY = int(os.environ.get("PWI_COLLECT_EVERY", "3600"))  # seconds
+
+
+async def scheduler():
+    """Collects at start (catching up after a shutdown) and then every COLLECT_EVERY seconds.
+
+    It checks the wall clock every minute instead of sleeping for an hour, because
+    asyncio's clock stops while the laptop is suspended."""
+    trigger, last = "catch_up", None
+    while True:
+        if last is None or time.time() - last >= COLLECT_EVERY:
+            last = time.time()
+            try:
+                results = await asyncio.to_thread(collect.run, paths.STORE_PATH, trigger)
+                for r in results:
+                    if r["status"] == "ok":
+                        log.info("collected %s: %d new, %d changed, %d unchanged, %d gone", r["name"],
+                                 r["inserted"], r["changed"], r["unchanged"], r["gone"])
+            except Exception:
+                log.exception("collection failed")
+            trigger = "schedule"
+        await asyncio.sleep(min(60, COLLECT_EVERY))
 
 
 def installed_commit():
@@ -105,10 +129,12 @@ async def main():
 
     log.info("pwi %s%s on Python %s, listening on %s, store %s", VERSION, f" ({commit})" if commit else "",
              platform.python_version(), paths.SOCKET_PATH, paths.STORE_PATH)
+    collecting = asyncio.create_task(scheduler())
     try:
         await stop.wait()
     finally:
         log.info("stopping")
+        collecting.cancel()
         server.close()
         for writer in list(clients):  # the bridges reconnect on their own once we're back
             writer.close()

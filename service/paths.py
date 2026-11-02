@@ -17,3 +17,6 @@ CONFIG_HOME = _xdg("XDG_CONFIG_HOME", ".config")
 DATA_DIR = _xdg("XDG_DATA_HOME", ".local/share") / "pwi"
 STORE_PATH = DATA_DIR / "store.db"
 APP_DIR = DATA_DIR / "app"  # installed code; replaced on every install, unlike the store
+BIN_DIR = Path.home() / ".local" / "bin"  # on PATH by default on Ubuntu
+
+CLAUDE_PROJECTS = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"

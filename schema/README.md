@@ -21,7 +21,7 @@ Not in the brief's entity list but needed: `collector_runs` for metrics. **Defer
 
 ## Decisions in this draft
 
-- **Natural keys make re-reads safe.** An event's id comes from the source (`git:commit:<sha>`), and the collector always writes with the upsert in `test_schema.py` (`UPSERT_EVENT`). An identical re-read changes nothing. A changed one (an amended commit, a session that grew) updates the row and sets `changed_at`. `content_hash` tells the two apart, and the counts go into `collector_runs`.
+- **Natural keys make re-reads safe.** An event's id comes from the source (`git:commit:<sha>`), and the collectors always write with `UPSERT_EVENT` in [`service/store.py`](../service/store.py), which `test_schema.py` also checks. An identical re-read changes nothing. A changed one (an amended commit, a session that grew) updates the row and sets `changed_at`. `content_hash` tells the two apart, and the counts go into `collector_runs`.
 - **Times are UTC, workdays are local.** Each event stores its UTC offset, and `local_day` is computed from both. A commit at 23:30 UTC in summer belongs to the next Lisbon workday.
 - **Claim versions are append-only.** A correction and a status change both add a version; triggers reject edits and gaps in numbering. A claim's state is its latest version (`current_claims`). `supersedes` links one claim to another that replaced it, such as a reversed decision. A newer version of the same claim isn't a supersession.
 - **Only I can verify.** A `supported` version must have `changed_by = 'me'`, enforced by a CHECK. The service sets `'me'` only when the change comes through the approval-gated `set_claim_status` tool or the frontend.
