@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+node_modules/
+frontend/dist/
+
+.env
+*.log
+.vscode/
+.idea/
