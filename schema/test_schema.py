@@ -53,7 +53,7 @@ def main():
     db = sqlite3.connect(":memory:", isolation_level=None)
     db.execute("PRAGMA foreign_keys = ON")
     db.executescript(SCHEMA)
-    check("schema applies", db.execute("select version from schema_version").fetchone() == (2,))
+    check("schema applies", db.execute("select version from schema_version").fetchone() == (store.SCHEMA_VERSION,))
 
     db.execute("insert into sources (id, kind, locator, name, added_at) values"
                " (1, 'git_repo', '/repos/PersonalAssistant', 'PersonalAssistant', ?),"
@@ -176,12 +176,18 @@ def test_migration():
         db.execute("insert into sources (id, kind, locator, name, added_at) values (1, 'git_repo', '/r', 'r', ?)", (NOW,))
         db.execute("insert into projects (id, name, created_at) values ('pwi', 'P', ?)", (NOW,))
         db.execute(UPSERT_EVENT, {**event("old1", "Old commit"), "payload": json.dumps({"body": "porque sim"})})
+        db.execute("insert into audit_log (at, actor, action, item_type, item_id) values (?, 'me', 'settings', 'source', '1')", (NOW,))
+        db.execute("create table audit_check as select sql from sqlite_master where name = 'audit_log'")
         db.close()
         store.create_or_check(path)
         db = sqlite3.connect(path)
         check("an older store is upgraded to the current schema version, keeping its data",
               db.execute("select version from schema_version").fetchone() == (store.SCHEMA_VERSION,)
               and db.execute("select count(*) from events").fetchone() == (1,))
+        check("the audit trail keeps its rows through the upgrade, and can record confidential reads",
+              db.execute("select count(*) from audit_log").fetchone() == (1,)
+              and db.execute("insert into audit_log (at, actor, action, item_type) values (?, 'claude',"
+                             " 'read_confidential', 'event')", (NOW,)).rowcount == 1)
         check("after the upgrade, existing events are searchable by message body",
               db.execute("select count(*) from events_fts where events_fts match 'porque'").fetchone() == (1,))
         backup = sqlite3.connect(Path(tmp) / "store.db.bak-v1")

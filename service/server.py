@@ -21,9 +21,12 @@ import os  # noqa: E402
 import platform  # noqa: E402
 import signal  # noqa: E402
 import time  # noqa: E402
+from contextlib import closing  # noqa: E402
 
 import collect  # noqa: E402
+import idle  # noqa: E402
 import paths  # noqa: E402
+import retention  # noqa: E402
 import store  # noqa: E402
 from handlers import VERSION, Layer, RpcError  # noqa: E402
 
@@ -32,7 +35,8 @@ COLLECT_EVERY = int(os.environ.get("PWI_COLLECT_EVERY", "3600"))  # seconds
 
 
 async def scheduler():
-    """Collects at start (catching up after a shutdown) and then every COLLECT_EVERY seconds.
+    """Collects at start (catching up after a shutdown) and then every COLLECT_EVERY seconds,
+    and runs retention once a day when the laptop is idle.
 
     It checks the wall clock every minute instead of sleeping for an hour, because
     asyncio's clock stops while the laptop is suspended."""
@@ -49,6 +53,13 @@ async def scheduler():
             except Exception:
                 log.exception("collection failed")
             trigger = "schedule"
+        try:
+            with closing(store.connect(paths.STORE_PATH)) as db:
+                cleanup = retention.due(db, idle.idle_seconds)
+            if cleanup:
+                await asyncio.to_thread(retention.run, paths.STORE_PATH)
+        except Exception:
+            log.exception("retention failed")
         await asyncio.sleep(min(60, COLLECT_EVERY))
 
 

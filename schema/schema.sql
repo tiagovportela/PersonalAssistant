@@ -1,4 +1,4 @@
--- Personal Work Intelligence layer: SQLite schema, Phase 1 draft (schema version 2).
+-- Personal Work Intelligence layer: SQLite schema, Phase 1 draft (schema version 3).
 -- A store made by an older version is upgraded by the files in migrations/.
 --
 -- Times are UTC text, 'YYYY-MM-DDTHH:MM:SSZ'. Ids that come from a source are
@@ -12,7 +12,7 @@
 PRAGMA journal_mode = WAL;
 
 CREATE TABLE schema_version (version INTEGER NOT NULL) STRICT;
-INSERT INTO schema_version VALUES (2);
+INSERT INTO schema_version VALUES (3);
 
 -- Sources: each allowlisted repository, folder or profile ------------------
 
@@ -328,7 +328,7 @@ CREATE TABLE audit_log (
     actor       TEXT NOT NULL CHECK (actor IN ('collector', 'claude', 'me', 'retention')),
     action      TEXT NOT NULL CHECK (action IN
                     ('collect', 'propose', 'revise', 'set_status', 'label', 'unlabel', 'link',
-                     'delete', 'expire', 'settings')),
+                     'delete', 'expire', 'settings', 'read_confidential')),
     item_type   TEXT NOT NULL,
     item_id     TEXT,
     count       INTEGER NOT NULL DEFAULT 1

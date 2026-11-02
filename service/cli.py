@@ -7,6 +7,7 @@ frontend exists. install.py puts a `pwi` launcher in ~/.local/bin.
     pwi disable ID         stop collecting a source and hide it from Claude; its data stays
     pwi enable ID          turn it back on
     pwi collect            collect every enabled source now
+    pwi cleanup            apply retention now (it also runs once a day by itself)
 """
 
 import sys
@@ -21,6 +22,7 @@ from contextlib import closing  # noqa: E402
 
 import collect  # noqa: E402
 import paths  # noqa: E402
+import retention  # noqa: E402
 import sources  # noqa: E402
 import store  # noqa: E402
 from batch import CollectorError  # noqa: E402
@@ -47,6 +49,7 @@ def main():
     for name, text in (("disable", "stop collecting a source and hide it from Claude"), ("enable", "turn a source back on")):
         commands.add_parser(name, help=text).add_argument("source_id", type=int, metavar="ID")
     commands.add_parser("collect", help="collect every enabled source now")
+    commands.add_parser("cleanup", help="apply retention now; it also runs once a day by itself")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.ERROR, format="%(levelname)s %(message)s")  # errors are printed per source
@@ -74,6 +77,10 @@ def main():
                 print(f"Source {args.source_id} {args.command}d.")
             elif args.command == "collect":
                 print_runs(collect.run(paths.STORE_PATH, "manual"))
+            elif args.command == "cleanup":
+                deleted = {k: v for k, v in retention.run(paths.STORE_PATH).items() if v}
+                print("Deleted: " + ", ".join(f"{v} {k.replace('_', ' ')}" for k, v in deleted.items())
+                      if deleted else "Nothing was old enough to delete.")
     except CollectorError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

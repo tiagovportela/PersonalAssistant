@@ -39,8 +39,11 @@ A folder allowlists every Git repository in it, up to 4 levels down. It skips hi
 | `pwi sources` | Lists sources, how many events each holds, and the last collection, with any error. |
 | `pwi disable ID` / `pwi enable ID` | Stops collecting a source and hides it from Claude; its data stays. |
 | `pwi collect` | Collects every enabled source now. |
+| `pwi cleanup` | Applies retention now. It also runs by itself once a day. |
 
 The service collects at login (catching up after a shutdown) and then every hour, also after the laptop wakes from sleep.
+
+**Retention:** once a day, at the first moment the laptop has been idle for 5 minutes (from GNOME's idle monitor, which reads only the time since your last input), the service deletes what's past its retention: events after 90 days, unconfirmed claims not changed for 90 days, unconfirmed session notes about days over 90 days old, and audit entries after 90 days. Confirmed claims are kept until you delete them, and Claude says when their evidence has expired. Retracted claims stay for history. If the laptop is never idle, retention runs anyway after 26 hours.
 
 **What's collected:**
 - **Git:** commits, merges and pushes from the last 90 days, plus a snapshot of the branch, ahead/behind and uncommitted-change counts whenever it changes. Only metadata is kept: subject, message (secrets redacted), author, times, files and line counts. Pushes come from Git's reflog. No hooks are installed, and Git never takes a lock while collecting.
@@ -66,7 +69,7 @@ The service collects at login (catching up after a shutdown) and then every hour
 
 | Folder | Contents |
 |---|---|
-| [`service/`](service) | The background service (`server.py`), the bridge Claude Desktop starts (`bridge.py`), the `pwi` CLI (`cli.py`), the collectors (`collect_*.py`), the read tools (`reads.py`), the write tools (`writes.py`), secret redaction, the store setup and the MCP handlers. |
+| [`service/`](service) | The background service (`server.py`), the bridge Claude Desktop starts (`bridge.py`), the `pwi` CLI (`cli.py`), the collectors (`collect_*.py`), the read tools (`reads.py`), the write tools (`writes.py`), retention (`retention.py`), secret redaction, the store setup and the MCP handlers. |
 | [`contracts/`](contracts) | The MCP tool contracts, validation and the six experiences' instructions. |
 | [`schema/`](schema) | The SQLite schema, and `migrations/` that upgrade an older store. |
 | [`spikes/`](spikes) | Phase 0 spike, kept for reference. |
@@ -76,7 +79,7 @@ The service collects at login (catching up after a shutdown) and then every hour
 Each test uses temporary folders and never touches an installed layer. Run them on both Python versions before pushing:
 
 ```bash
-for t in schema/test_schema.py contracts/test_tools.py contracts/test_experiences.py service/test_service.py service/test_collectors.py service/test_reads.py service/test_writes.py test_install.py; do
+for t in schema/test_schema.py contracts/test_tools.py contracts/test_experiences.py service/test_service.py service/test_collectors.py service/test_reads.py service/test_writes.py service/test_privacy.py test_install.py; do
   python3 -I "$t" || break
 done
 ```
@@ -85,4 +88,4 @@ To test on Python 3.14 on the dev PC, use `uv python install 3.14` and run the s
 
 ## Status
 
-The service serves all 17 tools with validation, collects Git and Claude Code sessions, and saves claims and session notes. All six experiences work end to end, using Claude's connectors for the online sources: daily briefing, project resumption, end-of-day review, search, weekly review and ad-hoc context. Not built yet: `read_confidential` (it returns *not found*), the frontend (deletion, labels, retention and allowlist settings), and retention cleanup.
+All 17 tools work, with validation. The service collects Git and Claude Code sessions, saves claims and session notes, and applies retention once a day. All six experiences work end to end, using Claude's connectors for the online sources: daily briefing, project resumption, end-of-day review, search, weekly review and ad-hoc context. Next: the local frontend, for deleting data, removing confidential labels, retention and allowlist settings, and collector status.

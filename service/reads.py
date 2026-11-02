@@ -592,6 +592,105 @@ def get_metrics(db, args):
     }
 
 
+# For read_confidential: temporary views that shadow labels and the *_for_claude views on
+# this one connection, with only the labels hiding the requested item lifted. The normal
+# read functions then run unchanged; everything else confidential stays hidden.
+LIFTED_VIEWS = """
+CREATE TEMP TABLE lifted (item_type TEXT, item_id TEXT);
+CREATE TEMP VIEW labels AS SELECT * FROM main.labels l WHERE NOT EXISTS
+    (SELECT 1 FROM temp.lifted x WHERE x.item_type = l.item_type AND x.item_id = l.item_id);
+CREATE TEMP VIEW confidential_events AS SELECT e.id FROM main.events e WHERE EXISTS (SELECT 1 FROM temp.labels l WHERE
+    (l.item_type = 'event' AND l.item_id = e.id) OR (l.item_type = 'source' AND l.item_id = CAST(e.source_id AS TEXT))
+    OR (l.item_type = 'project' AND l.item_id = e.project_id));
+CREATE TEMP VIEW events_for_claude AS SELECT e.* FROM main.events e JOIN main.sources s ON s.id = e.source_id
+    WHERE s.enabled = 1 AND e.id NOT IN (SELECT id FROM temp.confidential_events);
+CREATE TEMP VIEW claims_for_claude AS SELECT cc.* FROM main.current_claims cc WHERE cc.status <> 'retracted'
+    AND NOT EXISTS (SELECT 1 FROM temp.labels l WHERE (l.item_type = 'claim' AND l.item_id = cc.id)
+                    OR (l.item_type = 'project' AND l.item_id = cc.project_id))
+    AND NOT EXISTS (SELECT 1 FROM main.claim_evidence ce JOIN main.evidence ev ON ev.id = ce.evidence_id
+                    WHERE ce.claim_id = cc.id AND ce.version = cc.version
+                      AND (ev.event_id IN (SELECT id FROM temp.confidential_events)
+                           OR EXISTS (SELECT 1 FROM temp.labels l WHERE l.item_type = 'artifact' AND l.item_id = ev.artifact_id)));
+"""
+CONFIDENTIAL_NOTE = ("Confidential: shown only because I asked for it. Use it for this answer only: don't repeat it "
+                     "elsewhere, and don't save claims from it unless I say so.")
+
+
+def labels_hiding(db, item):
+    """The (type, id) labels that would hide an item, or None if the item doesn't exist."""
+    kind, item_id = item["type"], item["id"]
+
+    def for_event(event_id):
+        e = db.execute("SELECT source_id, project_id FROM main.events WHERE id = ?", (event_id,)).fetchone()
+        return None if e is None else [("event", event_id), ("source", str(e["source_id"])), ("project", e["project_id"])]
+
+    if kind == "event":
+        return for_event(item_id)
+    if kind == "project":
+        return [("project", item_id)] if db.execute("SELECT 1 FROM main.projects WHERE id = ?", (item_id,)).fetchone() else None
+    if kind == "source":
+        return [("source", item_id)] if db.execute("SELECT 1 FROM main.sources WHERE CAST(id AS TEXT) = ?",
+                                                   (item_id,)).fetchone() else None
+    if kind == "artifact":
+        a = db.execute("SELECT project_id FROM main.artifacts WHERE id = ?", (item_id,)).fetchone()
+        return None if a is None else [("artifact", item_id), ("project", a["project_id"])]
+    c = db.execute("SELECT * FROM main.current_claims WHERE id = ? AND status <> 'retracted'", (item_id,)).fetchone()
+    if c is None:
+        return None
+    lift = [("claim", item_id), ("project", c["project_id"])]
+    for ev in db.execute("SELECT ev.event_id, ev.artifact_id FROM main.claim_evidence ce JOIN main.evidence ev"
+                         " ON ev.id = ce.evidence_id WHERE ce.claim_id = ? AND ce.version = ?", (item_id, c["version"])):
+        if ev["event_id"]:
+            lift += for_event(ev["event_id"]) or []
+        if ev["artifact_id"]:
+            lift.append(("artifact", ev["artifact_id"]))
+    return lift
+
+
+def read_confidential(db, args):
+    """One confidential item, in the shape the matching normal tool returns. Claude Desktop asks me
+    to approve each call, and each one goes into the audit log."""
+    item = args["item"]
+    lift = labels_hiding(db, item)
+    if lift is None:
+        return {"found": False, "gaps": [f"There's no {item['type']} {item['id']}."]}
+    lift = [(t, i) for t, i in lift if i is not None]
+    was_confidential = any(db.execute("SELECT 1 FROM main.labels WHERE item_type = ? AND item_id = ?", pair).fetchone()
+                           for pair in lift)
+    db.executescript(LIFTED_VIEWS)
+    db.executemany("INSERT INTO temp.lifted VALUES (?, ?)", lift)
+    kind, item_id = item["type"], item["id"]
+    if kind == "project":
+        result = get_project(db, {"project": item_id})
+    elif kind == "event":
+        result = get_evidence(db, {"event_id": item_id})
+    elif kind == "claim":
+        found = claims(db, "id = ?", (item_id,))
+        result = {"claim": found[0], "found": True} if found else {"found": False}
+    elif kind == "artifact":
+        a = dict(db.execute("SELECT id, kind, title, url, project_id FROM main.artifacts WHERE id = ?", (item_id,)).fetchone())
+        cited = [{"claim_id": r["id"], "label": LABELS[r["status"]], "text": r["text"]} for r in db.execute(
+            f"SELECT DISTINCT c.id, c.status, c.text FROM claims_for_claude c JOIN main.claim_evidence ce"
+            f" ON ce.claim_id = c.id AND ce.version = c.version JOIN main.evidence ev ON ev.id = ce.evidence_id"
+            f" WHERE ev.artifact_id = ? AND c.status IN {OPEN}", (item_id,))]
+        result = {"artifact": a, "cited_by": cited, "found": True}
+    else:
+        s = db.execute("SELECT id, kind, name, locator, enabled FROM main.sources WHERE CAST(id AS TEXT) = ?",
+                       (item_id,)).fetchone()
+        recent = db.execute("SELECT * FROM events_for_claude WHERE source_id = ? AND type <> 'git.snapshot'"
+                            " ORDER BY occurred_at DESC LIMIT 20", (s["id"],)).fetchall()
+        result = {"source": dict(s), "recent_events": [brief_event(e) for e in recent], "found": True}
+    db.execute("INSERT INTO main.audit_log (at, actor, action, item_type, item_id) VALUES (?, 'claude', 'read_confidential', ?, ?)",
+               (datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), kind, item_id))
+    result["confidential"] = was_confidential
+    if was_confidential:
+        result["note"] = CONFIDENTIAL_NOTE
+    else:
+        result.setdefault("gaps", []).append("This item isn't labelled confidential; the normal tools show it too.")
+    return result
+
+
 READS = {"list_projects": list_projects, "get_day": get_day, "get_week": get_week, "get_project": get_project,
          "search": search, "list_unconfirmed": list_unconfirmed, "get_evidence": get_evidence,
-         "read_claude_sessions": read_claude_sessions, "get_metrics": get_metrics}
+         "read_claude_sessions": read_claude_sessions, "get_metrics": get_metrics,
+         "read_confidential": read_confidential}
