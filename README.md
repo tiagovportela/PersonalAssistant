@@ -44,6 +44,7 @@ A folder allowlists every Git repository in it, up to 4 levels down. It skips hi
 | `pwi collect` | Collects every enabled source now. |
 | `pwi cleanup` | Applies retention now. It also runs by itself once a day. |
 | `pwi open [SECTION]` | Opens the frontend in your browser, e.g. `pwi open confidential`. |
+| `pwi eval label [DAY]`, `pwi eval report` | The 5-day evaluation, below. |
 
 The service collects at login (catching up after a shutdown) and then every hour, also after the laptop wakes from sleep.
 
@@ -59,11 +60,32 @@ The service collects at login (catching up after a shutdown) and then every hour
 
 **Logs:** `journalctl --user -u pwi -f`. **Status:** `systemctl --user status pwi`.
 
+## The 5-day evaluation
+
+Before relying on the layer daily, test it against one real week you label by hand (brief §11 and §16). Your labels and the report are work data, so they stay in `~/.local/share/pwi/evaluation` and never go into the repository.
+
+**Each workday, at the end of the day:**
+1. `pwi eval label` opens today's file in your editor (`$EDITOR`, or the desktop's default). Write what really happened, before asking Claude about it, one item per line as `- project: what`: projects worked on, decisions, commitments (add `| due YYYY-MM-DD`), blockers and unfinished work. A few minutes is enough. A missed day can be labelled later with `pwi eval label 2026-11-09`.
+2. In Claude Desktop, run the end-of-day review.
+
+**During the week, in Claude Desktop:** ask for each day's briefing the next morning; resume a project; ask a what, a when and a why question; do one real task with it, such as a status update or meeting preparation. Restart the laptop once, to check collection catches up. Delete something in the frontend once.
+
+**After the fifth day:** `pwi eval report` (or `--from` and `--to` for other days). It compares your labels with what the layer found and Claude saved:
+- **Activity:** labelled project-days the layer saw or missed, and ones it recorded that you didn't label.
+- **Claims:** your decisions, commitments, blockers and unfinished work against Claude's claims and session notes, with what was missed, and the claims that match no label for you to judge. This is where false commitments or completions that didn't happen would show.
+- **Deadlines:** found with the right date, the wrong date, or missing.
+- **Evidence, confirmation and collection:** citation coverage, how many of Claude's claims you confirmed, corrected or retracted, session-note coverage, collector gaps and ingestion lag.
+- **No leaks:** it calls Claude's read tools over your week and checks that no confidential item, or item from a disabled source, appears in any result.
+- **Your checks:** a tick list for what only you can judge, such as whether each briefing was right.
+
+The brief sets the pass thresholds after this first week, from these numbers.
+
 ## Where things live
 
 | What | Where |
 |---|---|
 | Store (SQLite) | `~/.local/share/pwi/store.db` |
+| Evaluation labels and reports | `~/.local/share/pwi/evaluation` |
 | `pwi` command | `~/.local/bin/pwi` |
 | Installed code | `~/.local/share/pwi/app` (`version.json` says which commit) |
 | Socket the bridge connects to | `$XDG_RUNTIME_DIR/pwi/mcp.sock` (owner-only) |
@@ -73,7 +95,7 @@ The service collects at login (catching up after a shutdown) and then every hour
 
 | Folder | Contents |
 |---|---|
-| [`service/`](service) | The background service (`server.py`), the bridge Claude Desktop starts (`bridge.py`), the `pwi` CLI (`cli.py`), the collectors (`collect_*.py`), the read tools (`reads.py`), the write tools (`writes.py`), retention (`retention.py`), the frontend's web server and admin actions (`web.py`, `admin.py`), secret redaction, the store setup and the MCP handlers. |
+| [`service/`](service) | The background service (`server.py`), the bridge Claude Desktop starts (`bridge.py`), the `pwi` CLI (`cli.py`), the collectors (`collect_*.py`), the read tools (`reads.py`), the write tools (`writes.py`), retention (`retention.py`), the frontend's web server and admin actions (`web.py`, `admin.py`), the evaluation (`evaluation.py`), secret redaction, the store setup and the MCP handlers. |
 | [`contracts/`](contracts) | The MCP tool contracts, validation and the six experiences' instructions. |
 | [`schema/`](schema) | The SQLite schema, and `migrations/` that upgrade an older store. |
 | [`frontend/`](frontend) | The React frontend. `dist/` is the built app the service serves, committed so the laptop never needs Node.js. |
@@ -84,7 +106,7 @@ The service collects at login (catching up after a shutdown) and then every hour
 Each test uses temporary folders and never touches an installed layer. Run them on both Python versions before pushing:
 
 ```bash
-for t in schema/test_schema.py contracts/test_tools.py contracts/test_experiences.py service/test_service.py service/test_collectors.py service/test_reads.py service/test_writes.py service/test_privacy.py service/test_web.py test_install.py; do
+for t in schema/test_schema.py contracts/test_tools.py contracts/test_experiences.py service/test_service.py service/test_collectors.py service/test_reads.py service/test_writes.py service/test_privacy.py service/test_web.py service/test_evaluation.py test_install.py; do
   python3 -I "$t" || break
 done
 ```
@@ -101,4 +123,4 @@ To test on Python 3.14 on the dev PC, use `uv python install 3.14` and run the s
 
 ## Status
 
-Phase 1 is built. All 17 tools work, with validation. The service collects Git and Claude Code sessions, saves claims and session notes, applies retention once a day, and serves the local frontend. All six experiences work end to end, using Claude's connectors for the online sources. Next: the 5-day evaluation on real workdays.
+Phase 1 is built. All 17 tools work, with validation. The service collects Git and Claude Code sessions, saves claims and session notes, applies retention once a day, and serves the local frontend. All six experiences work end to end, using Claude's connectors for the online sources. Next: the 5-day evaluation on real workdays, with `pwi eval`.

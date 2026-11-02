@@ -9,21 +9,29 @@ frontend exists. install.py puts a `pwi` launcher in ~/.local/bin.
     pwi collect            collect every enabled source now
     pwi cleanup            apply retention now (it also runs once a day by itself)
     pwi open [SECTION]     open the frontend in the browser, e.g. pwi open claims
+    pwi eval label [DAY]   write down what really happened on a workday (default: today)
+    pwi eval report        compare your labelled days with what the layer found
 """
 
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+HERE = Path(__file__).resolve().parent
+sys.path[:0] = [str(HERE), str(HERE.parent / "contracts")]
 
 import argparse  # noqa: E402
 import json  # noqa: E402
 import logging  # noqa: E402
 import os  # noqa: E402
+import shlex  # noqa: E402
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+from datetime import date  # noqa: E402
 import webbrowser  # noqa: E402
 from contextlib import closing  # noqa: E402
 
 import collect  # noqa: E402
+import evaluation  # noqa: E402
 import paths  # noqa: E402
 import retention  # noqa: E402
 import sources  # noqa: E402
@@ -56,6 +64,43 @@ def open_frontend(section=""):
     return 0
 
 
+def label_day(db, day):
+    try:
+        date.fromisoformat(day)
+    except ValueError:
+        print("error: give the day as YYYY-MM-DD", file=sys.stderr)
+        return 1
+    path = evaluation.label_path(day)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text(evaluation.template(db, day), encoding="utf-8")
+        path.chmod(0o600)
+    print(f"Labels for {day}: {path}")
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
+    if editor:
+        return subprocess.call([*shlex.split(editor), str(path)])
+    if shutil.which("xdg-open"):
+        subprocess.Popen(["xdg-open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return 0
+
+
+def report_days(start, end):
+    days = evaluation.labelled_days(start, end)
+    if not days:
+        print("No labelled days yet. Start with: pwi eval label", file=sys.stderr)
+        return 1
+    text, summary = evaluation.report(paths.STORE_PATH, days)
+    out = evaluation.folder() / f"report-{days[0]}-to-{days[-1]}.md"
+    out.write_text(text, encoding="utf-8")
+    out.chmod(0o600)
+    print(f"{summary['days']} labelled days. Activity found: {summary['activity_recall']}. "
+          f"Leaks: {summary['leaks']}.")
+    if summary["unknown_projects"]:
+        print(f"Unknown project names in your labels: {', '.join(summary['unknown_projects'])}")
+    print(f"Report, with the checks to tick: {out}")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(prog="pwi", description="Personal Work Intelligence layer")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -69,6 +114,12 @@ def main():
     commands.add_parser("cleanup", help="apply retention now; it also runs once a day by itself")
     commands.add_parser("open", help="open the frontend in the browser").add_argument(
         "section", nargs="?", default="", help="e.g. sources, claims, confidential or retention")
+    evaluate = commands.add_parser("eval", help="the 5-day evaluation").add_subparsers(dest="step", required=True)
+    evaluate.add_parser("label", help="write down what really happened on a workday").add_argument(
+        "day", nargs="?", default=date.today().isoformat(), help="YYYY-MM-DD, default today")
+    reporting = evaluate.add_parser("report", help="compare your labelled days with what the layer found")
+    reporting.add_argument("--from", dest="start", metavar="DAY", help="first day, YYYY-MM-DD")
+    reporting.add_argument("--to", dest="end", metavar="DAY", help="last day, YYYY-MM-DD")
     args = parser.parse_args()
     if args.command == "open":
         return open_frontend(args.section)
@@ -98,6 +149,10 @@ def main():
                 print(f"Source {args.source_id} {args.command}d.")
             elif args.command == "collect":
                 print_runs(collect.run(paths.STORE_PATH, "manual"))
+            elif args.command == "eval" and args.step == "label":
+                return label_day(db, args.day)
+            elif args.command == "eval":
+                return report_days(args.start, args.end)
             elif args.command == "cleanup":
                 deleted = {k: v for k, v in retention.run(paths.STORE_PATH).items() if v}
                 print("Deleted: " + ", ".join(f"{v} {k.replace('_', ' ')}" for k, v in deleted.items())
