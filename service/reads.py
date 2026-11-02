@@ -159,7 +159,7 @@ def lookups_for(alias, branch):
         "notion": f"Open tasks and recently changed pages in {value}",
         "calendar_match": f"Upcoming meetings matching '{value}'",
         "gmail_query": f"Threads matching {value} from the last 14 days: requests to me, my promises and decisions",
-        "chat_space": f"Messages in {value} from the last 14 days: requests to me, my promises and decisions",
+        "chat_space": f"chat_messages with space '{value}' for the last 14 days: requests to me, my promises and decisions",
         "drive_folder": f"Documents in {value} changed in the last 14 days",
     }[kind]}] if kind in ALIAS_CONNECTOR else []
 

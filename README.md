@@ -45,12 +45,13 @@ A folder allowlists every Git repository in it, up to 4 levels down. It skips hi
 | `pwi cleanup` | Applies retention now. It also runs by itself once a day. |
 | `pwi open [SECTION]` | Opens the frontend in your browser, e.g. `pwi open confidential`. |
 | `pwi eval label [DAY]`, `pwi eval report` | The 5-day evaluation, below. |
+| `pwi google connect FILE`, `status`, `disconnect` | The layer's own read-only Google sign-in, for Google Chat. |
 
 The service collects at login (catching up after a shutdown) and then every hour, also after the laptop wakes from sleep.
 
 **Retention:** once a day, at the first moment the laptop has been idle for 5 minutes (from GNOME's idle monitor, which reads only the time since your last input), the service deletes what's past its retention: events after 90 days, unconfirmed claims not changed for 90 days, unconfirmed session notes about days over 90 days old, and audit entries after 90 days. Confirmed claims are kept until you delete them, and Claude says when their evidence has expired. Retracted claims stay for history. If the laptop is never idle, retention runs anyway after 26 hours.
 
-**Online sources** (Phase 2): GitHub, Google Calendar, Notion, Gmail, Google Chat and Google Drive are read live by Claude through its connectors, set up in Claude Desktop; the layer keeps no copy. In the frontend's Online sources page you choose which of them Claude may use for your work, and within what (for example Gmail `label:work`). GitHub, Calendar and Notion start allowed; Gmail, Chat and Drive start off until you turn them on. On Projects, note where each project lives online (a Notion page, a Drive folder, a Gmail search, a Chat space), or let Claude add it when it finds one. Commit messages that mention a PR (`#12`), an issue key (`BILL-345`) or a Notion, Docs or Drive link are linked to that work automatically.
+**Online sources** (Phase 2): GitHub, Google Calendar, Notion, Gmail, Google Chat and Google Drive are read live by Claude through its connectors, set up in Claude Desktop; the layer keeps no copy. In the frontend's Online sources page you choose which of them Claude may use for your work, and within what (for example Gmail `label:work`). GitHub, Calendar and Notion start allowed; Gmail, Chat and Drive start off until you turn them on. On Projects, note where each project lives online (a Notion page, a Drive folder, a Gmail search, a Chat space), or let Claude add it when it finds one. Google Chat is the exception: the layer reads it itself, read-only, rather than through a Claude connector, so its allowlist is enforced in code (see below). Commit messages that mention a PR (`#12`), an issue key (`BILL-345`) or a Notion, Docs or Drive link are linked to that work automatically.
 
 **What's collected:**
 - **Git:** commits, merges and pushes from the last 90 days, plus a snapshot of the branch, ahead/behind and uncommitted-change counts whenever it changes. Only metadata is kept: subject, message (secrets redacted), author, times, files and line counts. Pushes come from Git's reflog. No hooks are installed, and Git never takes a lock while collecting.
@@ -61,6 +62,19 @@ The service collects at login (catching up after a shutdown) and then every hour
 **Uninstall:** `python3 install.py --uninstall`. The store in `~/.local/share/pwi` is kept.
 
 **Logs:** `journalctl --user -u pwi -f`. **Status:** `systemctl --user status pwi`.
+
+## Google Chat
+
+The layer reads Google Chat itself, live and never stored, with your own Google account and read-only access only: if Google ever granted it more, the sign-in is refused and revoked. It reads only the spaces you allow: those named in Google Chat's scope on the Online sources page, or linked to a project as a Chat alias (an empty scope means every space), and never a confidential project's spaces. Claude gets two tools for it, `chat_spaces` and `chat_messages`.
+
+To set it up, once:
+1. In a Google Cloud project (your company's, if your admin prefers): enable the **Google Chat API**, and fill in its **Configuration** page with an app name, avatar and description; Google requires that even for reading. Leave interactive features off.
+2. **OAuth consent screen:** user type *Internal*, with the scopes `chat.spaces.readonly`, `chat.messages.readonly` and `chat.memberships.readonly`.
+3. **Credentials:** create an OAuth client ID of type **Desktop app**, and download its JSON file.
+4. On the laptop: `sudo apt install libsecret-tools` (so the sign-in is kept in GNOME Keyring), then `pwi google connect ~/Downloads/client_secret_….json`. Your browser opens Google's consent page.
+5. `pwi open online`: turn Google Chat on, and name the spaces it may read.
+
+If your Workspace admin restricts third-party apps, they need to allow this OAuth client once. `pwi google status` says who the layer is signed in as; `pwi google disconnect` revokes the sign-in at Google and forgets it.
 
 ## The 5-day evaluation
 
@@ -82,6 +96,17 @@ Before relying on the layer daily, test it against one real week you label by ha
 
 The brief sets the pass thresholds after this first week, from these numbers.
 
+## Choosing the Whisper model (Phase 0)
+
+Meeting transcription (Phase 3) runs Whisper on the laptop's CPU. Which model is accurate enough and fast enough on mixed Portuguese and English is decided by measuring, on the company laptop:
+
+1. Put 3 to 5 real recordings in a folder, 10 to 15 minutes in all, mixing Portuguese and English as your meetings do. For each, write a hand-corrected transcript with the same name and `.txt`, e.g. `standup.m4a` and `standup.txt`. Without them the benchmark still measures speed and memory, and you judge the transcripts by eye.
+2. Plug the laptop in, close heavy apps, and run `python3 bench/whisper_benchmark.py ~/path/to/folder`.
+
+The first run sets up a separate environment in `~/.local/share/pwi/bench-venv` and installs faster-whisper there, every package checked against the hashes in `bench/requirements.txt`; the service never uses it. If Python's `venv` module is missing, it tells you to `sudo apt install python3-venv`. It then runs tiny, base, small, medium and large-v3-turbo, each with language detected once (`auto`) and per segment (`multilingual`), and reports speed, memory and word error rate. It suggests the fastest model within 2 points of the best error rate that still runs at least twice as fast as real time. The report, every transcript, and the chosen model's revision and checksum (to pin it) stay in `~/.local/share/pwi/benchmark`. Expect it to take about an hour for 15 minutes of audio.
+
+Reviews of the third-party code the brief needs (the GNOME Focused Window extension and the Google Chat servers) are in [`docs/third_party_reviews.md`](docs/third_party_reviews.md).
+
 ## Where things live
 
 | What | Where |
@@ -101,6 +126,7 @@ The brief sets the pass thresholds after this first week, from these numbers.
 | [`contracts/`](contracts) | The MCP tool contracts, validation and the six experiences' instructions. |
 | [`schema/`](schema) | The SQLite schema, and `migrations/` that upgrade an older store. |
 | [`frontend/`](frontend) | The React frontend. `dist/` is the built app the service serves, committed so the laptop never needs Node.js. |
+| [`bench/`](bench) | The Phase 0 Whisper benchmark, with its own hash-pinned dependencies. |
 | [`spikes/`](spikes) | Phase 0 spike, kept for reference. |
 
 ## Tests
@@ -108,7 +134,7 @@ The brief sets the pass thresholds after this first week, from these numbers.
 Each test uses temporary folders and never touches an installed layer. Run them on both Python versions before pushing:
 
 ```bash
-for t in schema/test_schema.py contracts/test_tools.py contracts/test_experiences.py service/test_service.py service/test_collectors.py service/test_reads.py service/test_writes.py service/test_privacy.py service/test_web.py service/test_evaluation.py service/test_online.py test_install.py; do
+for t in schema/test_schema.py contracts/test_tools.py contracts/test_experiences.py service/test_service.py service/test_collectors.py service/test_reads.py service/test_writes.py service/test_privacy.py service/test_web.py service/test_evaluation.py service/test_online.py service/test_google_chat.py test_install.py; do
   python3 -I "$t" || break
 done
 ```
@@ -125,4 +151,4 @@ To test on Python 3.14 on the dev PC, use `uv python install 3.14` and run the s
 
 ## Status
 
-Phases 1 and 2 are built. All 18 tools work, with validation. The service collects Git and Claude Code sessions, saves claims and session notes, applies retention once a day, and serves the local frontend. Claude uses Gmail, Google Chat, Drive and Notion within the allowlist you set, saves commitments and decisions from them with the message or document as evidence, and links projects to where they live online. Next: the 5-day evaluation on real workdays (`pwi eval`), then Phase 3, meetings.
+Phases 1 and 2 are built. All 20 tools work, with validation. The service collects Git and Claude Code sessions, saves claims and session notes, applies retention once a day, and serves the local frontend. Claude uses Gmail, Drive and Notion within the allowlist you set, and Google Chat through the layer's own read-only sign-in, saves commitments and decisions from them with the message or document as evidence, and links projects to where they live online. Next: the 5-day evaluation on real workdays (`pwi eval`), then Phase 3, meetings.

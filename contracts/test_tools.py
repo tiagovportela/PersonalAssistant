@@ -19,7 +19,7 @@ ARCHITECTURE_TOOLS = {  # architecture v0.2 §4
     "get_evidence", "get_metrics", "get_instructions",
     "propose_claim", "update_claim", "save_session_note", "link_items", "set_claim_status", "add_confidential_label",
 }
-ADDED_TOOLS = {"list_projects", "read_confidential", "add_project_alias"}
+ADDED_TOOLS = {"list_projects", "read_confidential", "add_project_alias", "chat_spaces", "chat_messages"}
 
 
 def check(label, condition):
@@ -59,7 +59,7 @@ def fields(schema):
 def main():
     by_name = {t["name"]: t for t in TOOLS}
     check("no duplicate tool names", len(by_name) == len(TOOLS))
-    check("every architecture tool is present, plus the three documented additions",
+    check("every architecture tool is present, plus the five documented additions",
           set(by_name) == ARCHITECTURE_TOOLS | ADDED_TOOLS)
     check("no delete or remove tools", not any(re.search(r"delete|remove|purge", n) for n in by_name))
     check("names follow MCP naming rules", all(re.fullmatch(r"[A-Za-z0-9_-]{1,64}", n) for n in by_name))
@@ -67,7 +67,8 @@ def main():
     check("every tool has a description", all(t["description"].strip() for t in TOOLS))
 
     reads = {"search", "get_day", "get_week", "get_project", "list_unconfirmed", "read_claude_sessions",
-             "get_evidence", "get_metrics", "get_instructions", "list_projects", "read_confidential"}
+             "get_evidence", "get_metrics", "get_instructions", "list_projects", "read_confidential",
+             "chat_spaces", "chat_messages"}
     check("read tools say read-only, write tools don't",
           all(by_name[n]["annotations"]["readOnlyHint"] is (n in reads) for n in by_name))
     check("no tool claims to be destructive",

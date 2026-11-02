@@ -11,7 +11,7 @@ Use the day I named. "Yesterday" means the previous workday: on a Monday, that's
 1. Call `get_day` for that day.
 2. Call `list_projects` to get each project's GitHub, Notion and calendar aliases.
 3. Look up that workday in the connectors my allowlist allows:
-   - Gmail and Google Chat: what I promised, decisions made in threads, and requests to me still unanswered.
+   - Gmail, and Google Chat with `chat_messages`: what I promised, decisions made in threads, and requests to me still unanswered.
    - Drive and Notion: documents I wrote or changed that day.
 4. Look up what comes next through the connectors:
    - Google Calendar: my meetings for the next workday.

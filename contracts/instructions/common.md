@@ -4,7 +4,7 @@ These rules come from my personal work layer. They apply to everything below.
 
 **Sources**
 - The layer's tools hold my local work: Git, Claude Code sessions, saved claims and session notes.
-- Online sources are read live through your connectors: GitHub, Google Calendar, Notion, Gmail, Google Chat and Google Drive. The layer keeps no copy of them.
+- Online sources are read live, and the layer keeps no copy: GitHub, Google Calendar, Notion, Gmail and Google Drive through your connectors, and Google Chat through the layer's own `chat_spaces` and `chat_messages` tools, which apply my allowlist themselves.
 - `list_projects` returns `connectors`, my allowlist for online sources. Use a connector only if it's `allowed`, and only within its `scope`. If one I'd need is off, say so instead of using it.
 - `list_projects` also gives each project's aliases: its GitHub repository, Notion page, Drive folder, Gmail search, Chat space and calendar keyword. Look there first. When you find where a project lives in a source and it has no alias for it yet, add one with `add_project_alias`.
 - Commits list `refs`: the pull requests, issue keys and Notion, Docs or Drive links they mention. Use them to find the same work in the online sources.

@@ -11,6 +11,7 @@ import platform
 import sqlite3
 
 import collect
+import google_signin as google
 import paths
 import retention
 import sources
@@ -157,7 +158,17 @@ def remove_alias(db, kind, value):
 # Online sources --------------------------------------------------------------
 
 def connectors(db):
-    return [dict(r) for r in db.execute("SELECT provider, enabled, scope, changed_at FROM connectors ORDER BY rowid")]
+    rows = [dict(r) for r in db.execute("SELECT provider, enabled, scope, changed_at FROM connectors ORDER BY rowid")]
+    try:
+        signed_in = google.status()
+    except (OSError, ValueError):
+        signed_in = {"connected": False, "email": None, "keyring": False}
+    for r in rows:
+        if r["provider"] == "google_chat":  # read through the layer's own sign-in, not a Claude connector
+            r["through_layer"] = True
+            r["signed_in_as"] = signed_in["email"] if signed_in["connected"] else None
+            r["token_in_keyring"] = signed_in["keyring"]
+    return rows
 
 
 def set_connector(db, provider, changes):

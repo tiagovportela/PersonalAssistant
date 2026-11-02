@@ -22,6 +22,16 @@ function Connector({ connector, onSaved }) {
       <td>
         <strong>{name}</strong>
         <div className="quiet">{what}</div>
+        {connector.through_layer && (
+          <div className="small">
+            {connector.signed_in_as
+              ? <>Read by the layer itself, signed in as {connector.signed_in_as}, read-only.</>
+              : <>Read by the layer itself. Sign in first with <code>pwi google connect CLIENT_JSON</code>.</>}
+            {connector.signed_in_as && !connector.token_in_keyring && (
+              <span className="quiet"> The sign-in is in a file; install libsecret-tools to keep it in GNOME Keyring.</span>
+            )}
+          </div>
+        )}
       </td>
       <td>
         <label className="switch">
@@ -65,6 +75,7 @@ export function Online() {
       </Loading>
       <p className="quiet">
         Connectors themselves are set up in Claude Desktop. This page only tells Claude which of them it may use for your work.
+        Google Chat is the exception: the layer reads it itself, so this page is enforced, not just followed.
       </p>
     </Page>
   );

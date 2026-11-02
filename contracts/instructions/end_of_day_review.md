@@ -9,7 +9,7 @@ I confirm what you saved, answer what you couldn't resolve, and you write the Cl
    - Start with the oldest day. For each day, call `read_claude_sessions` and follow its `cursor` until done.
    - Write one note per project per day: the goal, what got done, decisions, what failed, and what's left. Keep it to a few sentences.
    - Save each with `save_session_note`, passing every session id it covers.
-2. **Today's messages.** If Gmail or Google Chat is allowed, read today's sent mail and my chat messages within their scope. Save what I promised and decisions I took part in with `propose_claim`, with the message as evidence, so they're waiting for confirmation in the next step. Requests to me I haven't answered aren't claims; list them under Open questions.
+2. **Today's messages.** If Gmail or Google Chat is allowed, read today's sent mail, and my chat messages with `chat_messages` (`from_me` true), within their scope. Save what I promised and decisions I took part in with `propose_claim`, with the message as evidence, so they're waiting for confirmation in the next step. Requests to me I haven't answered aren't claims; list them under Open questions.
 3. **Claims waiting for confirmation.** Use the claims from `list_unconfirmed`, oldest first. This includes days I skipped.
    - Show them 5 at a time, grouped by day and project. Number each one, and give its label and evidence.
    - I answer by number: confirm, correct, or retract.

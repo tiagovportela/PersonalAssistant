@@ -15,6 +15,7 @@ from contextlib import closing
 
 import collect
 import store
+from chat import CHAT_READS
 from reads import READS
 from writes import WRITES, Refused
 from experiences import PROMPTS, instructions, prompt_messages
@@ -26,7 +27,8 @@ VERSION = "0.1.0"
 SUPPORTED_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
 TOOL_NAMES = {t["name"] for t in TOOLS}
 READ_TOOLS = {t["name"] for t in TOOLS if t["annotations"]["readOnlyHint"]}
-REFRESHING = set(READS) - {"get_evidence", "read_confidential"}  # reads that collect first when data is stale
+READS = {**READS, **CHAT_READS}
+REFRESHING = set(READS) - {"get_evidence", "read_confidential", *CHAT_READS}  # reads that collect first when data is stale
 STALE_AFTER = 300  # seconds: older data is refreshed before a read
 REFRESH_WAIT = 10  # seconds a read waits for that refresh
 MAX_CHARS = 40000  # results longer than this are trimmed

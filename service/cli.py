@@ -11,6 +11,9 @@ frontend exists. install.py puts a `pwi` launcher in ~/.local/bin.
     pwi open [SECTION]     open the frontend in the browser, e.g. pwi open claims
     pwi eval label [DAY]   write down what really happened on a workday (default: today)
     pwi eval report        compare your labelled days with what the layer found
+    pwi google connect F   sign the layer in to Google, read-only, with the OAuth client file F
+    pwi google status      who the layer is signed in as
+    pwi google disconnect  revoke the layer's Google sign-in and forget it
 """
 
 import sys
@@ -32,6 +35,7 @@ from contextlib import closing  # noqa: E402
 
 import collect  # noqa: E402
 import evaluation  # noqa: E402
+import google_signin as google  # noqa: E402
 import paths  # noqa: E402
 import retention  # noqa: E402
 import sources  # noqa: E402
@@ -101,6 +105,30 @@ def report_days(start, end):
     return 0
 
 
+def google_command(args):
+    os.umask(0o077)
+    try:
+        if args.step == "connect":
+            def show(url):
+                print(f"Opening Google's sign-in page. If no browser opens, visit:\n{url}\n")
+                webbrowser.open(url)
+            done = google.connect(args.client_json, show)
+            print(f"Signed in as {done['email']}, read-only. The sign-in is kept in {done['stored_in']}.")
+            if not google.keyring_available():
+                print("To keep it in GNOME Keyring instead of a file: sudo apt install libsecret-tools, then connect again.")
+            print("Turn Google Chat on, and choose its spaces, with: pwi open online")
+        elif args.step == "status":
+            s = google.status()
+            print(f"Signed in as {s['email']}, read-only, kept in {'GNOME Keyring' if s['keyring'] else 'a file'}."
+                  if s["connected"] else "Not signed in. Run: pwi google connect CLIENT_JSON")
+        else:
+            print("Signed out; Google's access was revoked." if google.disconnect() else "The layer wasn't signed in.")
+    except (google.GoogleError, OSError, ValueError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(prog="pwi", description="Personal Work Intelligence layer")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -120,7 +148,15 @@ def main():
     reporting = evaluate.add_parser("report", help="compare your labelled days with what the layer found")
     reporting.add_argument("--from", dest="start", metavar="DAY", help="first day, YYYY-MM-DD")
     reporting.add_argument("--to", dest="end", metavar="DAY", help="last day, YYYY-MM-DD")
+    signin = commands.add_parser("google", help="the layer's own read-only Google sign-in").add_subparsers(
+        dest="step", required=True)
+    signin.add_parser("connect", help="sign in, read-only").add_argument(
+        "client_json", help="the OAuth client file (Desktop app) from your Google Cloud project")
+    signin.add_parser("status", help="who the layer is signed in as")
+    signin.add_parser("disconnect", help="revoke the sign-in and forget it")
     args = parser.parse_args()
+    if args.command == "google":
+        return google_command(args)
     if args.command == "open":
         return open_frontend(args.section)
 

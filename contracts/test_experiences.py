@@ -18,7 +18,7 @@ KNOWN_FIELDS = {
     "event_id", "evidence_id", "artifact_id", "artifact_kind", "read_at", "coverage.stale_sources",
     "due", "lookups", "aging", "cursor", "days_missing_session_notes", "project", "since", "until",
     "contradicts", "supported", "retracted", "disputed",
-    "connectors", "allowed", "scope", "refs", "references", "owner", "me", "due_at", "message", "document",
+    "connectors", "allowed", "scope", "refs", "references", "owner", "me", "due_at", "message", "document", "from_me",
 }
 # Section headings from the brief's appendix, in order.
 SECTIONS = {

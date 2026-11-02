@@ -132,6 +132,20 @@ TOOLS = [
          "Claude Code sessions for one workday with secrets redacted, for writing session notes. "
          "Paginated; pass the returned cursor to continue.",
          obj({"day": DAY, "project": PROJECT, "cursor": {"type": "string"}}, ["day"])),
+    read("chat_spaces",
+         "My Google Chat spaces that I allow you to read, read live through the layer: name, type, last activity "
+         "and linked project. Nothing is stored. If Google Chat is off or not signed in, it says so.",
+         obj()),
+    read("chat_messages",
+         "Google Chat messages between two workdays in the spaces I allow, read live through the layer and never "
+         "stored, with secrets redacted. Each has an artifact_id to cite as evidence, with artifact_kind message. "
+         "from_me true gives only what I wrote, e.g. for promises I made; query keeps messages containing those words.",
+         obj({"since": DAY,
+              "until": {**DAY, "description": "The last workday to include, YYYY-MM-DD. Default: the same as since."},
+              "space": {"type": "string", "description": "A space id (spaces/...) or name from chat_spaces. Default: every space I allow."},
+              "query": {"type": "string", "description": "Only messages containing all these words."},
+              "from_me": {"type": "boolean", "description": "true: only my messages. false: only other people's."}},
+             ["since"])),
     read("get_evidence",
          "One record in full, and whether it is still available. Pass exactly one: event_id for an event "
          "from get_day, get_week, get_project or search, or evidence_id for a piece of a claim's evidence.",
