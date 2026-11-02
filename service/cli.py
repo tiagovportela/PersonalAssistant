@@ -8,6 +8,7 @@ frontend exists. install.py puts a `pwi` launcher in ~/.local/bin.
     pwi enable ID          turn it back on
     pwi collect            collect every enabled source now
     pwi cleanup            apply retention now (it also runs once a day by itself)
+    pwi open [SECTION]     open the frontend in the browser, e.g. pwi open claims
 """
 
 import sys
@@ -16,8 +17,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import argparse  # noqa: E402
+import json  # noqa: E402
 import logging  # noqa: E402
 import os  # noqa: E402
+import webbrowser  # noqa: E402
 from contextlib import closing  # noqa: E402
 
 import collect  # noqa: E402
@@ -39,6 +42,20 @@ def print_runs(results):
             print(f"  {r['name']}: failed: {r['error']}")
 
 
+def open_frontend(section=""):
+    """The running service writes its frontend's address and a login link at each start."""
+    try:
+        info = json.loads((paths.RUNTIME_DIR / "frontend.json").read_text())
+    except (OSError, ValueError):
+        print("error: the service isn't running. Start it with: systemctl --user start pwi", file=sys.stderr)
+        return 1
+    print(f"Opening the frontend at http://127.0.0.1:{info['port']}")
+    link = info["login_url"] + (f"&to={section}" if section else "")
+    if not webbrowser.open(link):
+        print(f"No browser opened. Open this link yourself: {link}")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(prog="pwi", description="Personal Work Intelligence layer")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -50,7 +67,11 @@ def main():
         commands.add_parser(name, help=text).add_argument("source_id", type=int, metavar="ID")
     commands.add_parser("collect", help="collect every enabled source now")
     commands.add_parser("cleanup", help="apply retention now; it also runs once a day by itself")
+    commands.add_parser("open", help="open the frontend in the browser").add_argument(
+        "section", nargs="?", default="", help="e.g. sources, claims, confidential or retention")
     args = parser.parse_args()
+    if args.command == "open":
+        return open_frontend(args.section)
 
     logging.basicConfig(level=logging.ERROR, format="%(levelname)s %(message)s")  # errors are printed per source
     os.umask(0o077)

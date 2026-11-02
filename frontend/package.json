@@ -1,0 +1,19 @@
+{
+  "name": "pwi-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "The local frontend for the Personal Work Intelligence layer. Built here; the service serves dist/.",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite"
+  },
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "6.2.1",
+    "vite": "8.3.5"
+  }
+}

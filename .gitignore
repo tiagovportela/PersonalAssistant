@@ -9,7 +9,6 @@ venv/
 *.db-shm
 
 node_modules/
-frontend/dist/
 
 .env
 *.log

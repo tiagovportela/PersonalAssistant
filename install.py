@@ -69,6 +69,8 @@ def check_requirements(use_systemd):
         fail(f"this Python's SQLite ({sqlite3.sqlite_version}) can't create the store: {e}")
     if use_systemd and (not shutil.which("systemctl") or systemctl("show-environment", check=False).returncode):
         fail("systemd user services aren't available in this session.")
+    if not (REPO / "frontend" / "dist" / "index.html").exists():
+        fail("the frontend isn't built. Run: cd frontend && npm ci && npm run build")
     if not shutil.which("git"):
         fail("git is needed to read repositories. Install it with: sudo apt install git")
     if LAUNCHER.exists() and LAUNCHER_MARK not in LAUNCHER.read_text(encoding="utf-8", errors="replace"):
@@ -98,6 +100,7 @@ def copy_app(commit):
     shutil.copytree(REPO / "service", new / "service", ignore=skip)
     shutil.copytree(REPO / "contracts", new / "contracts", ignore=skip)
     shutil.copytree(REPO / "schema", new / "schema", ignore=skip)  # schema.sql and migrations/
+    shutil.copytree(REPO / "frontend" / "dist", new / "frontend" / "dist")  # built here; no Node.js needed
     (new / "version.json").write_text(json.dumps({
         "commit": commit,
         "installed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -230,7 +233,7 @@ def install(use_systemd):
         print(f"  {n}. {step}")
     if not on_path:
         print(f"'{paths.BIN_DIR}' isn't on your PATH in this terminal yet; after your next login, 'pwi' works on its own.")
-    print(f"Sources and their last collection: {pwi} sources")
+    print(f"Sources and their last collection: {pwi} sources. Settings, deletion and labels: {pwi} open")
     print("Logs: journalctl --user -u pwi -f")
 
 

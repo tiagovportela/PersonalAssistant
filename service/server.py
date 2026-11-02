@@ -29,9 +29,11 @@ import paths  # noqa: E402
 import retention  # noqa: E402
 import store  # noqa: E402
 from handlers import VERSION, Layer, RpcError  # noqa: E402
+from web import Frontend  # noqa: E402
 
 log = logging.getLogger("pwi")
 COLLECT_EVERY = int(os.environ.get("PWI_COLLECT_EVERY", "3600"))  # seconds
+FRONTEND_PORT = int(os.environ.get("PWI_FRONTEND_PORT", "0"))  # 0: any free port; pwi open finds it
 
 
 async def scheduler():
@@ -142,11 +144,14 @@ async def main():
     log.info("pwi %s%s on Python %s, listening on %s, store %s", VERSION, f" ({commit})" if commit else "",
              platform.python_version(), paths.SOCKET_PATH, paths.STORE_PATH)
     collecting = asyncio.create_task(scheduler())
+    frontend = Frontend(paths.STORE_PATH, VERSION + (f"+{commit}" if commit else ""), FRONTEND_PORT)
+    frontend.start()
     try:
         await stop.wait()
     finally:
         log.info("stopping")
         collecting.cancel()
+        frontend.stop()
         server.close()
         for writer in list(clients):  # the bridges reconnect on their own once we're back
             writer.close()

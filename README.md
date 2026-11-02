@@ -33,6 +33,9 @@ A folder allowlists every Git repository in it, up to 4 levels down. It skips hi
 
 ## Using it
 
+**The frontend** (`pwi open`) is where you see what the layer holds and control it: sources and projects, claims with their full history, activity, confidential labels (the only place to remove one), retention per kind of data, and the audit trail. Deleting is done only here: deleting evidence lists the claims that rely on it, and you decide for each one whether to keep it (its evidence shows as deleted), retract it, or delete it too. The frontend listens on 127.0.0.1 only, on a new port and with a new sign-in link each time the service starts; `pwi open` always finds them.
+
+
 | Command | What it does |
 |---|---|
 | `pwi add-repo PATH...` | Allowlists Git repositories, or every repository in a folder. Each becomes a project, and the Claude Code index turns on for sessions inside them. Collects straight away. |
@@ -40,6 +43,7 @@ A folder allowlists every Git repository in it, up to 4 levels down. It skips hi
 | `pwi disable ID` / `pwi enable ID` | Stops collecting a source and hides it from Claude; its data stays. |
 | `pwi collect` | Collects every enabled source now. |
 | `pwi cleanup` | Applies retention now. It also runs by itself once a day. |
+| `pwi open [SECTION]` | Opens the frontend in your browser, e.g. `pwi open confidential`. |
 
 The service collects at login (catching up after a shutdown) and then every hour, also after the laptop wakes from sleep.
 
@@ -69,9 +73,10 @@ The service collects at login (catching up after a shutdown) and then every hour
 
 | Folder | Contents |
 |---|---|
-| [`service/`](service) | The background service (`server.py`), the bridge Claude Desktop starts (`bridge.py`), the `pwi` CLI (`cli.py`), the collectors (`collect_*.py`), the read tools (`reads.py`), the write tools (`writes.py`), retention (`retention.py`), secret redaction, the store setup and the MCP handlers. |
+| [`service/`](service) | The background service (`server.py`), the bridge Claude Desktop starts (`bridge.py`), the `pwi` CLI (`cli.py`), the collectors (`collect_*.py`), the read tools (`reads.py`), the write tools (`writes.py`), retention (`retention.py`), the frontend's web server and admin actions (`web.py`, `admin.py`), secret redaction, the store setup and the MCP handlers. |
 | [`contracts/`](contracts) | The MCP tool contracts, validation and the six experiences' instructions. |
 | [`schema/`](schema) | The SQLite schema, and `migrations/` that upgrade an older store. |
+| [`frontend/`](frontend) | The React frontend. `dist/` is the built app the service serves, committed so the laptop never needs Node.js. |
 | [`spikes/`](spikes) | Phase 0 spike, kept for reference. |
 
 ## Tests
@@ -79,13 +84,21 @@ The service collects at login (catching up after a shutdown) and then every hour
 Each test uses temporary folders and never touches an installed layer. Run them on both Python versions before pushing:
 
 ```bash
-for t in schema/test_schema.py contracts/test_tools.py contracts/test_experiences.py service/test_service.py service/test_collectors.py service/test_reads.py service/test_writes.py service/test_privacy.py test_install.py; do
+for t in schema/test_schema.py contracts/test_tools.py contracts/test_experiences.py service/test_service.py service/test_collectors.py service/test_reads.py service/test_writes.py service/test_privacy.py service/test_web.py test_install.py; do
   python3 -I "$t" || break
 done
 ```
+
+After changing anything in `frontend/src`, rebuild and commit `frontend/dist` with it (Node.js 22, on the dev PC only):
+
+```bash
+cd frontend && npm ci && npm run build
+```
+
+Dependencies are pinned to exact versions, with integrity hashes in `package-lock.json`.
 
 To test on Python 3.14 on the dev PC, use `uv python install 3.14` and run the same loop with `"$(uv python find 3.14)"` in place of `python3`.
 
 ## Status
 
-All 17 tools work, with validation. The service collects Git and Claude Code sessions, saves claims and session notes, and applies retention once a day. All six experiences work end to end, using Claude's connectors for the online sources: daily briefing, project resumption, end-of-day review, search, weekly review and ad-hoc context. Next: the local frontend, for deleting data, removing confidential labels, retention and allowlist settings, and collector status.
+Phase 1 is built. All 17 tools work, with validation. The service collects Git and Claude Code sessions, saves claims and session notes, applies retention once a day, and serves the local frontend. All six experiences work end to end, using Claude's connectors for the online sources. Next: the 5-day evaluation on real workdays.

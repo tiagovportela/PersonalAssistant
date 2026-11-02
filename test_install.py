@@ -7,6 +7,7 @@ Run: python3 -I test_install.py
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -67,6 +68,11 @@ def main():
               {"service/server.py", "service/bridge.py", "service/handlers.py", "contracts/tools.py",
                "contracts/instructions/common.md", "schema/schema.sql", "version.json"} <= installed)
         check("tests and caches are not copied", not any("test_" in f or "__pycache__" in f for f in installed))
+        page = (app / "frontend" / "dist" / "index.html").read_text()
+        assets = re.findall(r'(?:src|href)="/(assets/[^"]+)"', page)
+        check("the built frontend is copied, with every file its page loads, and no sources or node_modules",
+              assets and all((app / "frontend" / "dist" / a).is_file() for a in assets)
+              and not any(f.startswith(("frontend/src", "frontend/node_modules")) for f in installed))
         check("the data folder is owner-only", (home / "data" / "pwi").stat().st_mode & 0o777 == 0o700)
         check("version.json records the commit and Python",
               {"commit", "python", "installed_at"} <= json.loads((app / "version.json").read_text()).keys())
