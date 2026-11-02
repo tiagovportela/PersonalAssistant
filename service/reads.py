@@ -10,6 +10,10 @@ import json
 import re
 import unicodedata
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+
+from collect_claude_code import is_prompt
+from redact import redact
 
 SESSION_FILE_DAYS = 30  # Claude Code deletes session files this long after their last change
 OPEN = "('proposed', 'supported', 'disputed')"  # statuses Claude may use; retracted and superseded never appear
@@ -432,5 +436,162 @@ def get_evidence(db, args):
                      "say 'source changed'; if it can't be read, say 'source unavailable'."]}
 
 
+SESSION_PAGE_CHARS = 30000  # session text per read_claude_sessions page
+MAX_TURN_CHARS = 4000
+# Slash commands and their output, which Claude Code records as user messages.
+NOISE = ("<local-command-", "<command-name>", "<command-message>")
+
+
+def clip(text):
+    return text if len(text) <= MAX_TURN_CHARS else text[:MAX_TURN_CHARS] + " […cut]"
+
+
+def session_turns(path, offset_min):
+    """My prompts and Claude's final reply to each: the text after its last tool call in that turn.
+    Tool calls, tool output, thinking and subagent work are left out, and secrets are redacted."""
+    turns, reply, reply_at = [], [], None
+
+    def at(entry):
+        try:
+            moment = datetime.fromisoformat(entry["timestamp"].replace("Z", "+00:00"))
+            return local_time(moment.strftime("%Y-%m-%dT%H:%M:%SZ"), offset_min)
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return None
+
+    def flush():
+        if reply:
+            turns.append({"role": "claude", "at": reply_at, "text": clip(redact("\n".join(reply).strip()))})
+
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(entry, dict) or entry.get("isSidechain"):
+                continue
+            message = entry.get("message") if isinstance(entry.get("message"), dict) else {}
+            content = message.get("content")
+            if entry.get("type") == "user" and not entry.get("isMeta") and is_prompt(message):
+                text = content if isinstance(content, str) else "\n".join(
+                    c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text")
+                if not text.strip() or text.lstrip().startswith(NOISE):
+                    continue
+                flush()
+                reply, reply_at = [], None
+                turns.append({"role": "me", "at": at(entry), "text": clip(redact(text.strip()))})
+            elif entry.get("type") == "assistant" and isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") == "tool_use":
+                        reply = []  # what came before a tool call wasn't the final reply
+                    elif block.get("type") == "text" and block.get("text", "").strip():
+                        reply.append(block["text"])
+                        reply_at = at(entry)
+    flush()
+    return turns
+
+
+def read_claude_sessions(db, args):
+    sql = ("SELECT * FROM events_for_claude WHERE type = 'claude_code.session' AND local_day = ? AND gone_at IS NULL")
+    params = [args["day"]]
+    if args.get("project"):
+        sql += " AND project_id = ?"
+        params.append(args["project"])
+    sessions = db.execute(sql + " ORDER BY occurred_at, id", params).fetchall()
+    start_session, start_turn = 0, 0
+    if args.get("cursor"):
+        m = re.fullmatch(r"(\d+):(\d+)", args["cursor"])
+        if not m:
+            return {"found": False, "gaps": ["That cursor isn't one read_claude_sessions returned. Start again without it."]}
+        start_session, start_turn = int(m.group(1)), int(m.group(2))
+    out, gaps, used, cursor = [], [], 0, None
+    for i in range(start_session, len(sessions)):
+        e = sessions[i]
+        path = Path(e["payload_ref"])
+        if not path.exists():
+            gaps.append(f"{e['id']}: Claude Code has deleted the session file.")
+            continue
+        turns = session_turns(path, e["utc_offset_min"])
+        first = start_turn if i == start_session else 0
+        chunk = []
+        for j in range(first, len(turns)):
+            size = len(turns[j]["text"]) + 60
+            if used + size > SESSION_PAGE_CHARS and (chunk or out):  # every page has at least one turn
+                cursor = f"{i}:{j}"
+                break
+            chunk.append(turns[j])
+            used += size
+        if chunk or not cursor:
+            out.append({"session_id": e["id"], "project": e["project_id"], "title": e["title"],
+                        "start": local_time(e["occurred_at"], e["utc_offset_min"]),
+                        "end": local_time(e["ended_at"], e["utc_offset_min"]),
+                        **({"continued": True} if first else {}), "turns": chunk})
+        if cursor:
+            break
+    result = {"day": args["day"], "sessions": out, "found": bool(out)}
+    if cursor:
+        result["cursor"] = cursor
+        result["note"] = "More turns follow: call read_claude_sessions again with this cursor."
+    if not sessions:
+        gaps.append(f"No Claude Code sessions recorded on {args['day']}"
+                    + (f" for project {args['project']}." if args.get("project") else "."))
+    if gaps:
+        result["gaps"] = gaps
+    return result
+
+
+def get_metrics(db, args):
+    since = args.get("since") or (date.today() - timedelta(days=30)).isoformat()
+    collectors = []
+    for s in db.execute("SELECT * FROM sources s WHERE enabled = 1 AND NOT EXISTS (SELECT 1 FROM labels l"
+                        " WHERE l.item_type = 'source' AND l.item_id = CAST(s.id AS TEXT)) ORDER BY id"):
+        runs = db.execute("SELECT * FROM collector_runs WHERE source_id = ? AND started_at >= ? ORDER BY started_at",
+                          (s["id"], since)).fetchall()
+        ok = [r for r in runs if r["status"] == "ok"]
+        times = [datetime.strptime(r["started_at"], "%Y-%m-%dT%H:%M:%SZ") for r in ok]
+        times.append(datetime.now(timezone.utc).replace(tzinfo=None))
+        gap = max((b - a for a, b in zip(times, times[1:])), default=timedelta(0))
+        collectors.append({
+            "source": f"git:{s['name']}" if s["kind"] == "git_repo" else s["kind"],
+            "runs": len(runs), "failed_runs": len(runs) - len(ok),
+            "last_success_at": ok[-1]["finished_at"] if ok else None,
+            "longest_gap_hours": round(gap.total_seconds() / 3600, 1) if ok else None,
+            "new_events": sum(r["inserted"] for r in ok), "corrections": sum(r["changed"] for r in ok),
+            "duplicates_avoided": sum(r["unchanged"] for r in ok), "gone": sum(r["gone"] for r in ok),
+            "last_error": runs[-1]["error"] if runs and runs[-1]["status"] == "error" else None,
+        })
+    claims_since = db.execute("SELECT c.id, c.type FROM claims c WHERE c.type <> 'session_note' AND c.created_at >= ?",
+                              (since,)).fetchall()
+    counts = {"proposed": len(claims_since), "confirmed": 0, "corrected": 0, "disputed": 0, "retracted": 0,
+              "still_unconfirmed": 0}
+    for c in claims_since:
+        versions = db.execute("SELECT status, text FROM claim_versions WHERE claim_id = ? ORDER BY version",
+                              (c["id"],)).fetchall()
+        status = versions[-1]["status"]
+        counts["confirmed"] += status == "supported"
+        counts["disputed"] += status == "disputed"
+        counts["retracted"] += status == "retracted"
+        counts["still_unconfirmed"] += status == "proposed"
+        counts["corrected"] += any(v["text"] != versions[0]["text"] for v in versions[1:])
+    reviewed = counts["confirmed"] + counts["retracted"] + counts["corrected"]
+    open_claims = db.execute(f"SELECT id, version FROM claims_for_claude WHERE status IN {OPEN} AND type <> 'session_note'").fetchall()
+    cited = sum(bool(db.execute("SELECT 1 FROM claim_evidence WHERE claim_id = ? AND version = ? LIMIT 1",
+                                (c["id"], c["version"])).fetchone()) for c in open_claims)
+    return {
+        "since": since,
+        "collectors": collectors,
+        "claims": counts,
+        "claude_accuracy": {"confirmed_share": round(counts["confirmed"] / reviewed, 2) if reviewed else None,
+                            "reviewed": reviewed},
+        "citation_coverage": round(cited / len(open_claims), 2) if open_claims else None,
+        "session_notes": db.execute("SELECT COUNT(*) FROM claims WHERE type = 'session_note' AND created_at >= ?",
+                                    (since,)).fetchone()[0],
+        "found": True,
+    }
+
+
 READS = {"list_projects": list_projects, "get_day": get_day, "get_week": get_week, "get_project": get_project,
-         "search": search, "list_unconfirmed": list_unconfirmed, "get_evidence": get_evidence}
+         "search": search, "list_unconfirmed": list_unconfirmed, "get_evidence": get_evidence,
+         "read_claude_sessions": read_claude_sessions, "get_metrics": get_metrics}

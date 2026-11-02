@@ -106,9 +106,10 @@ def main():
             missing = call("propose_claim", {"type": "decision", "text": "We use SQLite."})
             check("a claim without evidence is rejected with a retry hint",
                   missing["result"]["isError"] is True and text_of(missing).endswith("call propose_claim again."))
-            unbuilt = call("propose_claim", {"type": "decision", "text": "We use SQLite.", "evidence": EVIDENCE})
-            check("a write tool that isn't built yet errors and saves nothing",
-                  unbuilt["result"]["isError"] is True and "nothing was saved" in text_of(unbuilt)
+            unknown = call("propose_claim", {"type": "decision", "text": "We use SQLite.", "evidence": EVIDENCE})
+            check("a claim citing an event the layer doesn't have is refused, and nothing is saved",
+                  unknown["result"]["isError"] is True and "Nothing was saved" in text_of(unknown)
+                  and "isn't an event the layer has" in text_of(unknown)
                   and sqlite3.connect(db_path).execute("select count(*) from claims").fetchone() == (0,))
 
             day = data_of(call("get_day", {"day": "2026-11-02"}))

@@ -66,7 +66,7 @@ The service collects at login (catching up after a shutdown) and then every hour
 
 | Folder | Contents |
 |---|---|
-| [`service/`](service) | The background service (`server.py`), the bridge Claude Desktop starts (`bridge.py`), the `pwi` CLI (`cli.py`), the collectors (`collect_*.py`), the read tools (`reads.py`), secret redaction, the store setup and the MCP handlers. |
+| [`service/`](service) | The background service (`server.py`), the bridge Claude Desktop starts (`bridge.py`), the `pwi` CLI (`cli.py`), the collectors (`collect_*.py`), the read tools (`reads.py`), the write tools (`writes.py`), secret redaction, the store setup and the MCP handlers. |
 | [`contracts/`](contracts) | The MCP tool contracts, validation and the six experiences' instructions. |
 | [`schema/`](schema) | The SQLite schema, and `migrations/` that upgrade an older store. |
 | [`spikes/`](spikes) | Phase 0 spike, kept for reference. |
@@ -76,7 +76,7 @@ The service collects at login (catching up after a shutdown) and then every hour
 Each test uses temporary folders and never touches an installed layer. Run them on both Python versions before pushing:
 
 ```bash
-for t in schema/test_schema.py contracts/test_tools.py contracts/test_experiences.py service/test_service.py service/test_collectors.py service/test_reads.py test_install.py; do
+for t in schema/test_schema.py contracts/test_tools.py contracts/test_experiences.py service/test_service.py service/test_collectors.py service/test_reads.py service/test_writes.py test_install.py; do
   python3 -I "$t" || break
 done
 ```
@@ -85,4 +85,4 @@ To test on Python 3.14 on the dev PC, use `uv python install 3.14` and run the s
 
 ## Status
 
-The service serves all 17 tools with validation and collects Git and Claude Code sessions. Working: `get_instructions` and the prompts, and the read tools `list_projects`, `get_day`, `get_week`, `get_project`, `search`, `list_unconfirmed` and `get_evidence`. Daily briefing, project resumption, search and weekly review work end to end, using connectors for the online sources. Not built yet: the write tools (they save nothing), `read_claude_sessions`, `get_metrics` and `read_confidential`. Next: claims and session notes, for the end-of-day review.
+The service serves all 17 tools with validation, collects Git and Claude Code sessions, and saves claims and session notes. All six experiences work end to end, using Claude's connectors for the online sources: daily briefing, project resumption, end-of-day review, search, weekly review and ad-hoc context. Not built yet: `read_confidential` (it returns *not found*), the frontend (deletion, labels, retention and allowlist settings), and retention cleanup.

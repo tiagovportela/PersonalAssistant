@@ -16,6 +16,7 @@ from contextlib import closing
 import collect
 import store
 from reads import READS
+from writes import WRITES, Refused
 from experiences import PROMPTS, instructions, prompt_messages
 from tools import EXPERIENCES, TOOLS
 from validate import error_text, validate
@@ -159,6 +160,15 @@ class Layer:
                 result = READS[name](db, args)
                 result["coverage"] = coverage(db, refreshed)
             return text_result(as_data(fit(result)))
+        if name in WRITES:
+            try:
+                with closing(store.connect(self.store_path)) as db:
+                    result = WRITES[name](db, args)
+            except Refused as e:
+                log.info("tool %s refused: %s", name, e)
+                return text_result(f"{name} was not run: {e}\nNothing was saved. Fix this and call {name} again, "
+                                   "or tell me why you can't.", is_error=True)
+            return text_result(as_data(result))
         if name in READ_TOOLS:
             return text_result(as_data({
                 "found": False,
