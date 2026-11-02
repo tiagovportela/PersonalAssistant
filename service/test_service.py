@@ -87,7 +87,7 @@ def main():
                   sock.stat().st_mode & 0o777 == 0o600 and sock.parent.stat().st_mode & 0o777 == 0o700)
             check("the store is created owner-only, at the current schema version",
                   db_path.stat().st_mode & 0o777 == 0o600 and db_path.parent.stat().st_mode & 0o777 == 0o700
-                  and sqlite3.connect(db_path).execute("select version from schema_version").fetchone() == (3,))
+                  and sqlite3.connect(db_path).execute("select version from schema_version").fetchone() == (4,))
             check("bridge connects once the service is up", rpc("ping").get("result") == {})
 
             init = rpc("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},

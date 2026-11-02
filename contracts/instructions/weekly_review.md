@@ -13,8 +13,10 @@ Use the week I named. Weeks run Monday to Sunday. If I named no week, use the la
    - GitHub: merged PRs, releases, and PRs open for more than 5 days.
    - Notion: tasks completed, and tasks overdue or due next week.
    - Google Calendar: key meetings, such as reviews, demos and decisions.
+   - Gmail and Google Chat: decisions and commitments made in threads that week, and requests to me still open.
+   - Drive and Notion: documents written or substantially changed.
 3. Use `aging` from `get_week` for overdue commitments, open blockers and long-unconfirmed claims.
-4. Save any new commitment, blocker or decision you found online with `propose_claim`, with evidence.
+4. Save any new commitment, blocker or decision you found online with `propose_claim`, with evidence, and any project alias you found with `add_project_alias`.
 
 ## Output
 

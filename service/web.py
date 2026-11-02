@@ -70,6 +70,11 @@ def routes():
         ("GET", r"/api/labels", lambda app, db, m, q, b: admin.labels(db)),
         ("POST", r"/api/labels", lambda app, db, m, q, b: admin.add_label(db, b.get("type"), b.get("id"))),
         ("DELETE", r"/api/labels/([^/]+)/(.+)", lambda app, db, m, q, b: admin.remove_label(db, unquote(m[1]), unquote(m[2]))),
+        ("POST", r"/api/projects/([^/]+)/aliases", lambda app, db, m, q, b: admin.add_alias(
+            db, unquote(m[1]), b.get("kind"), b.get("value"))),
+        ("DELETE", r"/api/aliases/([a-z_]+)/(.+)", lambda app, db, m, q, b: admin.remove_alias(db, m[1], unquote(m[2]))),
+        ("GET", r"/api/connectors", lambda app, db, m, q, b: admin.connectors(db)),
+        ("PUT", r"/api/connectors/([a-z_]+)", lambda app, db, m, q, b: admin.set_connector(db, m[1], b)),
         ("GET", r"/api/retention", lambda app, db, m, q, b: admin.retention_settings(db)),
         ("PUT", r"/api/retention/([a-z_]+)", lambda app, db, m, q, b: admin.set_retention(db, m[1], b.get("days"))),
     ]

@@ -10,7 +10,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from tools import APPROVAL, ARTIFACT_KINDS, CLAIM_TYPES, ITEM_TYPES, TOOLS  # noqa: E402
+from tools import ALIAS_KINDS, APPROVAL, ARTIFACT_KINDS, CLAIM_TYPES, ITEM_TYPES, TOOLS  # noqa: E402
 from validate import error_text, validate  # noqa: E402
 
 SCHEMA = (HERE.parent / "schema" / "schema.sql").read_text()
@@ -19,7 +19,7 @@ ARCHITECTURE_TOOLS = {  # architecture v0.2 §4
     "get_evidence", "get_metrics", "get_instructions",
     "propose_claim", "update_claim", "save_session_note", "link_items", "set_claim_status", "add_confidential_label",
 }
-ADDED_TOOLS = {"list_projects", "read_confidential"}
+ADDED_TOOLS = {"list_projects", "read_confidential", "add_project_alias"}
 
 
 def check(label, condition):
@@ -59,7 +59,7 @@ def fields(schema):
 def main():
     by_name = {t["name"]: t for t in TOOLS}
     check("no duplicate tool names", len(by_name) == len(TOOLS))
-    check("every architecture tool is present, plus the two documented additions",
+    check("every architecture tool is present, plus the three documented additions",
           set(by_name) == ARCHITECTURE_TOOLS | ADDED_TOOLS)
     check("no delete or remove tools", not any(re.search(r"delete|remove|purge", n) for n in by_name))
     check("names follow MCP naming rules", all(re.fullmatch(r"[A-Za-z0-9_-]{1,64}", n) for n in by_name))
@@ -97,6 +97,8 @@ def main():
     rels = set(by_name["link_items"]["inputSchema"]["properties"]["rel"]["enum"])
     check("link relations match the links table", rels == check_enum("links", "rel"))
     check("artifact kinds match the artifacts table", set(ARTIFACT_KINDS) == check_enum("artifacts", "kind"))
+    check("Claude can add online aliases only, never local ones like repository paths",
+          set(ALIAS_KINDS) < check_enum("project_aliases", "kind") and "repo_path" not in ALIAS_KINDS)
 
     # Claude Desktop drops these keywords, so no rule may depend on them alone.
     text = json.dumps(TOOLS)

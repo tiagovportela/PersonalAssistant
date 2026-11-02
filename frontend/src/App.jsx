@@ -3,6 +3,7 @@ import { Audit } from "./views/Audit.jsx";
 import { Claims } from "./views/Claims.jsx";
 import { Confidential } from "./views/Confidential.jsx";
 import { Events } from "./views/Events.jsx";
+import { Online } from "./views/Online.jsx";
 import { Overview } from "./views/Overview.jsx";
 import { Projects } from "./views/Projects.jsx";
 import { Retention } from "./views/Retention.jsx";
@@ -11,6 +12,7 @@ import { Sources } from "./views/Sources.jsx";
 const SECTIONS = [
   ["overview", "Overview", Overview],
   ["sources", "Sources", Sources],
+  ["online", "Online sources", Online],
   ["projects", "Projects", Projects],
   ["claims", "Claims", Claims],
   ["activity", "Activity", Events],

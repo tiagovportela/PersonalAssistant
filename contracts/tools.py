@@ -29,6 +29,9 @@ ITEM = {
     "additionalProperties": False,
 }
 
+# Where a project lives in each online source; Claude may add these, only I remove them.
+ALIAS_KINDS = ["github_repo", "notion", "drive_folder", "gmail_query", "chat_space", "calendar_match"]
+
 ARTIFACT_KINDS = ["branch", "file", "pull_request", "release", "work_item",
                   "document", "message", "calendar_event", "web_page"]
 
@@ -96,7 +99,8 @@ TOOLS = [
          "a project resumption, an end-of-day review, a search, a weekly review, or help with a work task.",
          obj({"experience": {"type": "string", "enum": EXPERIENCES}}, ["experience"])),
     read("list_projects",
-         "Lists my projects with their aliases (repos, Notion, calendar) and last activity.",
+         "Lists my projects with their aliases (GitHub, Notion, Drive, Gmail, Chat, calendar) and last activity, "
+         "and which online connectors I allow you to use, with their scope. Use only connectors that are on.",
          obj()),
     read("search",
          "Keyword search over events, claims and artifact titles. Try several wordings; accents are ignored.",
@@ -161,6 +165,14 @@ TOOLS = [
                                          "description": "A session id from read_claude_sessions, e.g. claude_code:session:<uuid>."},
                                "description": "Required, at least one: the sessions this note summarises."}},
               ["project", "day", "text", "session_ids"]), idempotent=True),
+    write("add_project_alias",
+          "Records where a project lives in an online source, so later lookups go straight there: github_repo "
+          "(owner/repo), notion (a page or database link), drive_folder (a folder link or path), gmail_query (a Gmail "
+          "search, e.g. label:billing), chat_space (a Google Chat space name), or calendar_match (a word in its "
+          "meeting titles). Add one when you find a project's place in a source and list_projects doesn't have it yet.",
+          obj({"project": PROJECT, "kind": {"type": "string", "enum": ALIAS_KINDS},
+               "value": {"type": "string", "minLength": 1, "description": "The repository, link, search, space or keyword."}},
+              ["project", "kind", "value"]), idempotent=True),
     write("link_items",
           "Links two items: the same work across sources, or one claim contradicting, superseding or "
           "duplicating another. A 'contradicts' link marks both claims disputed; nothing is overwritten.",

@@ -15,6 +15,7 @@ import secrets
 import unicodedata
 
 import store
+from collect_git import github_repo
 from reads import LABELS, OPEN, find_project
 
 DATE_OR_TIME = re.compile(r"\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}Z)?")
@@ -327,6 +328,32 @@ def add_confidential_label(db, args):
     return transaction(db, work)
 
 
+def add_project_alias(db, args):
+    """Claude records where a project lives online; only I remove aliases, in the frontend."""
+    project = find_project(db, args["project"])
+    if project is None:
+        raise Refused(f"There's no project '{args['project']}'. Call list_projects for the ids.")
+    kind, value = args["kind"], args["value"].strip()
+    if kind == "github_repo" and "github.com" in value:
+        value = github_repo(value) or value  # a link to the repository becomes owner/repo
+    if kind == "github_repo" and not re.fullmatch(r"[\w.-]+/[\w.-]+", value):
+        raise Refused("github_repo is owner/repo, e.g. acme/billing-service.")
+
+    def work():
+        row = db.execute("SELECT project_id FROM project_aliases WHERE kind = ? AND value = ?", (kind, value)).fetchone()
+        if row and row["project_id"] == project["id"]:
+            return {"project": project["id"], "kind": kind, "value": value, "created": False}
+        if row:
+            owner = find_project(db, row["project_id"])  # never name a confidential project
+            raise Refused(f"That {kind} already belongs to {'project ' + owner['id'] if owner else 'another project'}. "
+                          "Tell me if it should move; I change it in the frontend.")
+        db.execute("INSERT INTO project_aliases VALUES (?, ?, ?, 'claude', ?)", (kind, value, project["id"], store.now()))
+        audit(db, "link", "project", project["id"])
+        return {"project": project["id"], "kind": kind, "value": value, "created": True}
+
+    return transaction(db, work)
+
+
 WRITES = {"propose_claim": propose_claim, "update_claim": update_claim, "save_session_note": save_session_note,
           "link_items": link_items, "set_claim_status": set_claim_status,
-          "add_confidential_label": add_confidential_label}
+          "add_confidential_label": add_confidential_label, "add_project_alias": add_project_alias}

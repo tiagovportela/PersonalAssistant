@@ -44,7 +44,7 @@ def brief_event(e):
     if e["actor"] != "me":
         item["actor"] = e["actor"]
     if e["type"] in ("git.commit", "git.merge"):
-        item.update({k: p.get(k) for k in ("files_changed", "insertions", "deletions")})
+        item.update({k: p.get(k) for k in ("files_changed", "insertions", "deletions", "refs")})
     elif e["type"] == "git.push":
         item.update({k: p.get(k) for k in ("branch", "commits")})
     elif e["type"] == "claude_code.session":
@@ -131,10 +131,37 @@ def list_projects(db, args):
     aliases = db.execute("SELECT project_id, kind, value FROM project_aliases ORDER BY kind, value").fetchall()
     for p in projects:
         p["aliases"] = [{"kind": a["kind"], "value": a["value"]} for a in aliases if a["project_id"] == p["id"]]
-    result = {"projects": projects, "found": bool(projects)}
+    result = {"projects": projects, "connectors": connectors(db), "found": bool(projects)}
     if not projects:
         result["gaps"] = ["The layer has no projects yet: no repositories are allowlisted (pwi add-repo)."]
     return result
+
+
+CONNECTOR_NAMES = {"github": "GitHub", "google_calendar": "Google Calendar", "notion": "Notion", "gmail": "Gmail",
+                   "google_chat": "Google Chat", "google_drive": "Google Drive"}
+ALIAS_CONNECTOR = {"github_repo": "github", "notion": "notion", "calendar_match": "google_calendar",
+                   "gmail_query": "gmail", "chat_space": "google_chat", "drive_folder": "google_drive"}
+
+
+def connectors(db):
+    """The allowlist for online sources: use a connector only when it's on, and within its scope."""
+    return [{"connector": r["provider"], "name": CONNECTOR_NAMES[r["provider"]], "allowed": bool(r["enabled"]),
+             "scope": r["scope"] or ("everything you can see" if r["enabled"] else None)}
+            for r in db.execute("SELECT * FROM connectors ORDER BY rowid")]
+
+
+def lookups_for(alias, branch):
+    kind, value = alias["kind"], alias["value"]
+    if kind == "github_repo":
+        return [{"connector": "github", "query": f"Open pull requests in {value}: mine, and those waiting for my review"},
+                {"connector": "github", "query": f"CI status and failing checks for branch {branch or 'the default branch'} in {value}"}]
+    return [{"connector": ALIAS_CONNECTOR[kind], "query": {
+        "notion": f"Open tasks and recently changed pages in {value}",
+        "calendar_match": f"Upcoming meetings matching '{value}'",
+        "gmail_query": f"Threads matching {value} from the last 14 days: requests to me, my promises and decisions",
+        "chat_space": f"Messages in {value} from the last 14 days: requests to me, my promises and decisions",
+        "drive_folder": f"Documents in {value} changed in the last 14 days",
+    }[kind]}] if kind in ALIAS_CONNECTOR else []
 
 
 def get_day(db, args):
@@ -233,15 +260,19 @@ def get_project(db, args):
     aliases = db.execute("SELECT kind, value FROM project_aliases WHERE project_id = ? ORDER BY kind, value",
                          (pid,)).fetchall()
     branch = json.loads(snapshot[0]["payload"]).get("branch") if snapshot else None
-    lookups = []
-    for a in aliases:
-        if a["kind"] == "github_repo":
-            lookups.append({"connector": "github", "query": f"Open pull requests in {a['value']}: mine, and those waiting for my review"})
-            lookups.append({"connector": "github", "query": f"CI status and failing checks for branch {branch or 'the default branch'} in {a['value']}"})
-        elif a["kind"] == "notion":
-            lookups.append({"connector": "notion", "query": f"Open tasks in {a['value']}"})
-        elif a["kind"] == "calendar_match":
-            lookups.append({"connector": "google_calendar", "query": f"Upcoming meetings matching '{a['value']}'"})
+    allowed = {c["connector"] for c in connectors(db) if c["allowed"]}
+    lookups = [q for a in aliases for q in lookups_for(a, branch)]
+    blocked = sorted({q["connector"] for q in lookups} - allowed)
+    lookups = [q for q in lookups if q["connector"] in allowed]
+    refs = {}
+    for e in db.execute("SELECT local_day, payload FROM events_for_claude WHERE project_id = ? AND type IN"
+                        " ('git.commit', 'git.merge') AND gone_at IS NULL ORDER BY occurred_at DESC LIMIT 300", (pid,)):
+        for ref in json.loads(e["payload"]).get("refs", []):
+            seen = refs.setdefault(ref, {"ref": ref, "last_seen_day": e["local_day"], "commits": 0})
+            seen["commits"] += 1
+    links = [dict(r) for r in db.execute(
+        "SELECT from_type, from_id, rel, to_type, to_id, method FROM links WHERE (from_type = 'project' AND from_id = ?)"
+        " OR (to_type = 'project' AND to_id = ?) ORDER BY created_at DESC LIMIT 30", (pid, pid))]
     result = {
         "project": {"id": pid, "name": project["name"], "status": project["status"],
                     "aliases": [dict(a) for a in aliases]},
@@ -255,6 +286,8 @@ def get_project(db, args):
         "last_activity_day": db.execute("SELECT MAX(local_day) FROM events_for_claude WHERE project_id = ?"
                                         " AND type <> 'git.snapshot'", (pid,)).fetchone()[0],
         "lookups": lookups,
+        "references": list(refs.values())[:20],
+        "links": links,
         "found": True,
     }
     gaps = []
@@ -263,6 +296,9 @@ def get_project(db, args):
                     "recent_sessions and recent_commits, and label it unconfirmed.")
     if not any(a["kind"] == "github_repo" for a in aliases):
         gaps.append("This project has no GitHub remote, so open PRs and CI can't be looked up.")
+    if blocked:
+        gaps.append(f"These connectors are off in my settings, so don't use them: "
+                    f"{', '.join(CONNECTOR_NAMES[c] for c in blocked)}.")
     if state is None:
         gaps.append("No Git state has been collected for this project yet.")
     if gaps:

@@ -50,6 +50,8 @@ The service collects at login (catching up after a shutdown) and then every hour
 
 **Retention:** once a day, at the first moment the laptop has been idle for 5 minutes (from GNOME's idle monitor, which reads only the time since your last input), the service deletes what's past its retention: events after 90 days, unconfirmed claims not changed for 90 days, unconfirmed session notes about days over 90 days old, and audit entries after 90 days. Confirmed claims are kept until you delete them, and Claude says when their evidence has expired. Retracted claims stay for history. If the laptop is never idle, retention runs anyway after 26 hours.
 
+**Online sources** (Phase 2): GitHub, Google Calendar, Notion, Gmail, Google Chat and Google Drive are read live by Claude through its connectors, set up in Claude Desktop; the layer keeps no copy. In the frontend's Online sources page you choose which of them Claude may use for your work, and within what (for example Gmail `label:work`). GitHub, Calendar and Notion start allowed; Gmail, Chat and Drive start off until you turn them on. On Projects, note where each project lives online (a Notion page, a Drive folder, a Gmail search, a Chat space), or let Claude add it when it finds one. Commit messages that mention a PR (`#12`), an issue key (`BILL-345`) or a Notion, Docs or Drive link are linked to that work automatically.
+
 **What's collected:**
 - **Git:** commits, merges and pushes from the last 90 days, plus a snapshot of the branch, ahead/behind and uncommitted-change counts whenever it changes. Only metadata is kept: subject, message (secrets redacted), author, times, files and line counts. Pushes come from Git's reflog. No hooks are installed, and Git never takes a lock while collecting.
 - **Claude Code:** an index of sessions whose working folder is inside an allowlisted repository: start, end, Claude Code's title for the session (redacted), and prompt count. Session content is never copied; it stays in `~/.claude/projects` until Claude Code deletes it after 30 days.
@@ -106,7 +108,7 @@ The brief sets the pass thresholds after this first week, from these numbers.
 Each test uses temporary folders and never touches an installed layer. Run them on both Python versions before pushing:
 
 ```bash
-for t in schema/test_schema.py contracts/test_tools.py contracts/test_experiences.py service/test_service.py service/test_collectors.py service/test_reads.py service/test_writes.py service/test_privacy.py service/test_web.py service/test_evaluation.py test_install.py; do
+for t in schema/test_schema.py contracts/test_tools.py contracts/test_experiences.py service/test_service.py service/test_collectors.py service/test_reads.py service/test_writes.py service/test_privacy.py service/test_web.py service/test_evaluation.py service/test_online.py test_install.py; do
   python3 -I "$t" || break
 done
 ```
@@ -123,4 +125,4 @@ To test on Python 3.14 on the dev PC, use `uv python install 3.14` and run the s
 
 ## Status
 
-Phase 1 is built. All 17 tools work, with validation. The service collects Git and Claude Code sessions, saves claims and session notes, applies retention once a day, and serves the local frontend. All six experiences work end to end, using Claude's connectors for the online sources. Next: the 5-day evaluation on real workdays, with `pwi eval`.
+Phases 1 and 2 are built. All 18 tools work, with validation. The service collects Git and Claude Code sessions, saves claims and session notes, applies retention once a day, and serves the local frontend. Claude uses Gmail, Google Chat, Drive and Notion within the allowlist you set, saves commitments and decisions from them with the message or document as evidence, and links projects to where they live online. Next: the 5-day evaluation on real workdays (`pwi eval`), then Phase 3, meetings.

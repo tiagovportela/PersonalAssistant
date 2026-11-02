@@ -18,6 +18,7 @@ KNOWN_FIELDS = {
     "event_id", "evidence_id", "artifact_id", "artifact_kind", "read_at", "coverage.stale_sources",
     "due", "lookups", "aging", "cursor", "days_missing_session_notes", "project", "since", "until",
     "contradicts", "supported", "retracted", "disputed",
+    "connectors", "allowed", "scope", "refs", "references", "owner", "me", "due_at", "message", "document",
 }
 # Section headings from the brief's appendix, in order.
 SECTIONS = {
@@ -67,7 +68,9 @@ def main():
                          ("only I change a claim's status", "Only I confirm"),
                          ("confidential reads only on request", "only when I explicitly ask"),
                          ("deletion only in the frontend", "deletion happens only in the layer's frontend"),
-                         ("never overwrite contradictions", "Never overwrite a contradiction silently")]:
+                         ("never overwrite contradictions", "Never overwrite a contradiction silently"),
+                         ("online sources only within my allowlist", "Use a connector only if it's `allowed`"),
+                         ("a request isn't a commitment until accepted", "A request made to me that I haven't accepted")]:
         check(f"shared rules say: {rule}", phrase in common)
 
     check("each experience's instructions stay under 12,000 characters", all(len(t) < 12000 for t in texts.values()))

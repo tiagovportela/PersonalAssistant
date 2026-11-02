@@ -163,6 +163,7 @@ CREATE TRIGGER events_fts_update AFTER UPDATE OF title ON events BEGIN
     INSERT INTO events_fts (events_fts, rowid, title) VALUES ('delete', OLD.seq, OLD.title);
     INSERT INTO events_fts (rowid, title) VALUES (NEW.seq, NEW.title);
 END;
+DROP TABLE connectors;
 UPDATE schema_version SET version = 1;
 """
 
@@ -188,6 +189,10 @@ def test_migration():
               db.execute("select count(*) from audit_log").fetchone() == (1,)
               and db.execute("insert into audit_log (at, actor, action, item_type) values (?, 'claude',"
                              " 'read_confidential', 'event')", (NOW,)).rowcount == 1)
+        check("the upgrade adds the online-sources allowlist, with Gmail, Chat and Drive off until I turn them on",
+              dict(db.execute("select provider, enabled from connectors").fetchall())
+              == {"github": 1, "google_calendar": 1, "notion": 1, "gmail": 0, "google_chat": 0, "google_drive": 0}
+              and db.execute("insert into project_aliases values ('gmail_query', 'label:x', 'pwi', 'me', ?)", (NOW,)).rowcount == 1)
         check("after the upgrade, existing events are searchable by message body",
               db.execute("select count(*) from events_fts where events_fts match 'porque'").fetchone() == (1,))
         backup = sqlite3.connect(Path(tmp) / "store.db.bak-v1")

@@ -103,9 +103,10 @@ def projects(db):
         " (SELECT MAX(local_day) FROM events e WHERE e.project_id = p.id AND e.type <> 'git.snapshot') AS last_activity_day,"
         " (SELECT COUNT(*) FROM current_claims c WHERE c.project_id = p.id AND c.status <> 'retracted') AS claims"
         " FROM projects p ORDER BY last_activity_day IS NULL, last_activity_day DESC, p.id").fetchall()
-    aliases = db.execute("SELECT project_id, kind, value FROM project_aliases ORDER BY kind, value").fetchall()
+    aliases = db.execute("SELECT project_id, kind, value, method FROM project_aliases ORDER BY kind, value").fetchall()
     return [{**dict(p), "confidential": ("project", p["id"]) in labelled,
-             "aliases": [{"kind": a["kind"], "value": a["value"]} for a in aliases if a["project_id"] == p["id"]]}
+             "aliases": [{"kind": a["kind"], "value": a["value"], "added_by": a["method"]}
+                         for a in aliases if a["project_id"] == p["id"]]}
             for p in rows]
 
 
@@ -121,6 +122,57 @@ def update_project(db, project_id, changes):
             db.execute(f"UPDATE projects SET {field} = ? WHERE id = ?", (str(changes[field]).strip(), project_id))
     audit(db, "settings", "project", project_id)
     return {"project_id": project_id, **{k: changes[k] for k in ("name", "status") if k in changes}}
+
+
+ONLINE_ALIASES = ("github_repo", "notion", "drive_folder", "gmail_query", "chat_space", "calendar_match")
+
+
+def add_alias(db, project_id, kind, value):
+    if kind not in ONLINE_ALIASES:
+        raise Invalid("Add a GitHub repository, Notion page, Drive folder, Gmail search, Chat space or calendar keyword.")
+    value = str(value or "").strip()
+    if not value:
+        raise Invalid("Give the repository, link, search, space or keyword.")
+    if db.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is None:
+        raise Invalid(f"There's no project {project_id}.")
+    row = db.execute("SELECT project_id FROM project_aliases WHERE kind = ? AND value = ?", (kind, value)).fetchone()
+    if row:
+        raise Invalid(f"That already belongs to project {row['project_id']}. Remove it there first.")
+    db.execute("INSERT INTO project_aliases VALUES (?, ?, ?, 'me', ?)", (kind, value, project_id, store.now()))
+    audit(db, "link", "project", project_id)
+    return {"project": project_id, "kind": kind, "value": value}
+
+
+def remove_alias(db, kind, value):
+    if kind not in ONLINE_ALIASES:
+        raise Invalid("A repository's folder is managed in Sources; remove the source there.")
+    row = db.execute("SELECT project_id FROM project_aliases WHERE kind = ? AND value = ?", (kind, value)).fetchone()
+    if row is None:
+        raise Invalid("That alias doesn't exist.")
+    db.execute("DELETE FROM project_aliases WHERE kind = ? AND value = ?", (kind, value))
+    audit(db, "settings", "project", row["project_id"])
+    return {"kind": kind, "value": value, "removed": True}
+
+
+# Online sources --------------------------------------------------------------
+
+def connectors(db):
+    return [dict(r) for r in db.execute("SELECT provider, enabled, scope, changed_at FROM connectors ORDER BY rowid")]
+
+
+def set_connector(db, provider, changes):
+    if db.execute("SELECT 1 FROM connectors WHERE provider = ?", (provider,)).fetchone() is None:
+        raise Invalid(f"There's no connector {provider}.")
+    if "enabled" in changes:
+        db.execute("UPDATE connectors SET enabled = ?, changed_at = ? WHERE provider = ?",
+                   (1 if changes["enabled"] else 0, store.now(), provider))
+    if "scope" in changes:
+        scope = str(changes["scope"] or "").strip() or None
+        if scope and len(scope) > 500:
+            raise Invalid("Keep the scope under 500 characters.")
+        db.execute("UPDATE connectors SET scope = ?, changed_at = ? WHERE provider = ?", (scope, store.now(), provider))
+    audit(db, "settings", "connector", provider)
+    return dict(db.execute("SELECT provider, enabled, scope FROM connectors WHERE provider = ?", (provider,)).fetchone())
 
 
 # Browsing --------------------------------------------------------------------

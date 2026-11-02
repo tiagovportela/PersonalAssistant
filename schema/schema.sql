@@ -1,4 +1,4 @@
--- Personal Work Intelligence layer: SQLite schema, Phase 1 draft (schema version 3).
+-- Personal Work Intelligence layer: SQLite schema (schema version 4).
 -- A store made by an older version is upgraded by the files in migrations/.
 --
 -- Times are UTC text, 'YYYY-MM-DDTHH:MM:SSZ'. Ids that come from a source are
@@ -12,7 +12,7 @@
 PRAGMA journal_mode = WAL;
 
 CREATE TABLE schema_version (version INTEGER NOT NULL) STRICT;
-INSERT INTO schema_version VALUES (3);
+INSERT INTO schema_version VALUES (4);
 
 -- Sources: each allowlisted repository, folder or profile ------------------
 
@@ -55,15 +55,34 @@ CREATE TABLE projects (
 ) STRICT;
 
 -- Rule-based linking: an event whose repo, cwd or page matches an alias belongs to that project.
+-- The online kinds tell Claude where the project lives in each connector: a Notion page or
+-- database, a Drive folder, a Gmail search, a Google Chat space, a calendar keyword.
 CREATE TABLE project_aliases (
     kind        TEXT NOT NULL CHECK (kind IN
-                    ('repo_path', 'git_remote', 'github_repo', 'claude_code_cwd', 'notion', 'calendar_match')),
+                    ('repo_path', 'git_remote', 'github_repo', 'claude_code_cwd', 'notion', 'calendar_match',
+                     'drive_folder', 'gmail_query', 'chat_space')),
     value       TEXT NOT NULL,
     project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     method      TEXT NOT NULL CHECK (method IN ('rule', 'claude', 'me')),
     created_at  TEXT NOT NULL,
     PRIMARY KEY (kind, value)                   -- an alias points at exactly one project
 ) STRICT;
+
+-- Online sources, read live by Claude through its connectors; the layer keeps no copy.
+-- The allowlist for them: Claude uses a connector only when it's on, and only within
+-- its scope (free text such as "label:work" or "the Engineering teamspace"), plus each
+-- project's aliases. Default deny: Gmail, Chat and Drive start off.
+CREATE TABLE connectors (
+    provider    TEXT PRIMARY KEY CHECK (provider IN
+                    ('github', 'google_calendar', 'notion', 'gmail', 'google_chat', 'google_drive')),
+    enabled     INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+    scope       TEXT,
+    changed_at  TEXT NOT NULL
+) STRICT;
+INSERT INTO connectors (provider, enabled, changed_at) VALUES
+    ('github', 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')), ('google_calendar', 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('notion', 1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')), ('gmail', 0, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    ('google_chat', 0, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')), ('google_drive', 0, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 -- Episodic memory: local events --------------------------------------------
 

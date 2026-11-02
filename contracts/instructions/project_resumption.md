@@ -9,8 +9,8 @@ Use the project I named. If the name doesn't match a project id, call `list_proj
 ## Steps
 
 1. Call `get_project`.
-2. Run each query in its `lookups` list through the GitHub connector: open PRs, CI status of the current branch, and failing tests.
-3. Check Notion for open tasks on this project, and Google Calendar for upcoming meetings about it.
+2. Run each query in its `lookups` list through its connector: GitHub for open PRs, CI and failing tests, and Notion, Gmail, Google Chat, Drive and Calendar where the project has aliases there. Follow its `references` too.
+3. If the project has no alias in a source you'd expect, look for it there within the allowlist, and add what you find with `add_project_alias`.
 4. If the objective is unclear or older than a week, `search` for recent session notes and decisions on this project.
 5. Save any new blocker or decision you found online with `propose_claim`, with evidence.
 

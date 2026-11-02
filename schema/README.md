@@ -7,7 +7,8 @@
 | Brief (§6–§10) | Tables |
 |---|---|
 | Allowlists, collector status, missed and duplicated events | `sources` (`enabled` is the allowlist), `collector_runs` (seen / inserted / changed / unchanged / gone per pass) |
-| Project, rule-based links across sources (FR4) | `projects`, `project_aliases` |
+| Project, rule-based links across sources (FR4) | `projects`, `project_aliases` (local paths, and where each project lives online); commits' `refs` in `payload` |
+| Allowlist for online sources | `connectors`: on or off per connector, with a free-text scope |
 | ActivityEvent, WorkSession | `events`. Sessions and focus spans are events with `ended_at`. |
 | Artifact, WorkItem | `artifacts` (a Notion task is `kind = 'work_item'`). Online ones are references only. |
 | Evidence: a local record, or a link/ID plus when it was read | `evidence` → an event, or an artifact with `read_at` and `source_version` |
@@ -56,6 +57,6 @@ Later phases add `firefox.visit`, `app.focus` (one event per continuous focus sp
 
 ## Decided (2 Nov 2026)
 
-1. **Projects:** one project per allowlisted repository, created automatically with a `repo_path` alias. I rename or merge projects in the frontend. Claude adds Notion and calendar aliases through `link_items`.
+1. **Projects:** one project per allowlisted repository, created automatically with a `repo_path` alias. I rename projects and edit their aliases in the frontend. Claude adds online aliases (GitHub, Notion, Drive, Gmail, Chat, calendar) through `add_project_alias`, and only I remove them.
 2. **Session notes:** one per project per workday, keyed by `(project_id, about_day)`. Saving again for the same pair adds a version instead of a second note. This is service code, because both fields live on versions.
 3. **Unconfirmed claims older than 3 months are deleted**, as the brief says. `retention.unconfirmed_claim` sets the period, and the deletion goes into `audit_log`.

@@ -10,21 +10,24 @@ Use the day I named. "Yesterday" means the previous workday: on a Monday, that's
 
 1. Call `get_day` for that day.
 2. Call `list_projects` to get each project's GitHub, Notion and calendar aliases.
-3. Look up what comes next through the connectors:
+3. Look up that workday in the connectors my allowlist allows:
+   - Gmail and Google Chat: what I promised, decisions made in threads, and requests to me still unanswered.
+   - Drive and Notion: documents I wrote or changed that day.
+4. Look up what comes next through the connectors:
    - Google Calendar: my meetings for the next workday.
    - Notion: tasks assigned to me that are due in the next 3 workdays, or overdue.
    - GitHub: for each active project, my open PRs, review requests, and failed CI on my branches.
-4. Use the commitments in `get_day`'s `due` list. Check each against Notion or the calendar where possible.
-5. Call `list_unconfirmed` for the count of claims waiting for my confirmation.
-6. Save any new decision, commitment or blocker you found in the connectors with `propose_claim`, with evidence.
+5. Use the commitments in `get_day`'s `due` list. Check each against Notion or the calendar where possible.
+6. Call `list_unconfirmed` for the count of claims waiting for my confirmation.
+7. Save any new decision, commitment or blocker you found in the connectors with `propose_claim`, with evidence.
 
 ## Output
 
-**What I did**: completed work, investigations, decisions and failed attempts, grouped by project. Each item cites its evidence and is labelled.
+**What I did**: completed work, investigations, decisions, documents written and failed attempts, grouped by project. Each item cites its evidence and is labelled.
 
 **What comes next**: meetings with times, deadlines, commitments, and anything to prepare.
 
-**Needs attention**: blockers, aging PRs, failed CI and unanswered requests.
+**Needs attention**: blockers, aging PRs, failed CI, and requests to me in mail and chat that are still unanswered.
 
 **Suggested focus**: up to 3 ranked recommendations, each with a one-line rationale and its evidence.
 

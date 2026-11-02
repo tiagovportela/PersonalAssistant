@@ -152,6 +152,11 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); }
 .table .actions > * + * { margin-left: 1rem; }
 .nowrap { white-space: nowrap; font-variant-numeric: tabular-nums; }
 
+.places ul { list-style: none; margin: 0 0 0.75rem; padding: 0; display: grid; gap: 0.3rem; }
+.places .row { max-width: 40rem; }
+.places select { flex: 0 0 auto; }
+.scope input { font-family: var(--sans); }
+
 /* Content ------------------------------------------------------------------ */
 
 .quiet { color: var(--muted); }
