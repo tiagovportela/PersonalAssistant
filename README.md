@@ -26,14 +26,16 @@ Then quit Claude Desktop completely (Ctrl+Q, or Quit from the tray icon) and ope
 Then allowlist the repositories to collect. Nothing is read until you do:
 
 ```bash
-pwi add-repo ~/work/repo-a ~/work/repo-b
+pwi add-repo ~/Projects
 ```
+
+A folder allowlists every Git repository in it, up to 4 levels down. It skips hidden folders, dependency and build folders such as `node_modules`, and broken `.git` folders. Run the same command again to add repositories created since; one you disabled stays off. A single repository works too: `pwi add-repo ~/Projects/some-repo`.
 
 ## Using it
 
 | Command | What it does |
 |---|---|
-| `pwi add-repo PATH...` | Allowlists Git repositories. Each becomes a project, and the Claude Code index turns on for sessions inside them. Collects straight away. |
+| `pwi add-repo PATH...` | Allowlists Git repositories, or every repository in a folder. Each becomes a project, and the Claude Code index turns on for sessions inside them. Collects straight away. |
 | `pwi sources` | Lists sources, how many events each holds, and the last collection, with any error. |
 | `pwi disable ID` / `pwi enable ID` | Stops collecting a source and hides it from Claude; its data stays. |
 | `pwi collect` | Collects every enabled source now. |

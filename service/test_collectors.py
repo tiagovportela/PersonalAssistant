@@ -249,7 +249,49 @@ def main():
     bad = subprocess.run([*cli, "disable", "999"], env=env, capture_output=True, text=True)
     check("pwi reports a bad source id as an error, not a traceback",
           bad.returncode == 1 and "no source 999" in bad.stderr)
+    test_folders(env, cli)
     check("foreign keys hold", sqlite3.connect(paths.STORE_PATH).execute("PRAGMA foreign_key_check").fetchall() == [])
+
+
+def test_folders(env, cli):
+    """`pwi add-repo ~/Projects`: every repository in a folder, and new ones on a second run."""
+    projects = TMP / "repos"  # holds work (allowlisted) and other (disabled earlier)
+    for repo in ("third", "clients/acme/app", "node_modules/dep", ".hidden/x", "a/b/c/d/too-deep"):
+        (projects / repo).mkdir(parents=True)
+        sh(projects / repo, "git", "init", "-q")
+    (projects / "notes").mkdir()
+    (projects / "broken" / ".git").mkdir(parents=True)  # a .git folder that isn't a repository
+    (projects / "broken" / ".git" / "._HEAD").write_text("zip junk")
+    db = store.connect(paths.STORE_PATH)
+    results = {Path(a["path"]).resolve().relative_to(projects.resolve()).as_posix(): a["status"]
+               for a in sources.add_path(db, projects)}
+    check("a folder allowlists the repositories in it, including nested folders, but not dependencies, "
+          "hidden folders or anything too deep",
+          set(results) == {"work", "other", "third", "clients/acme/app", "broken"})
+    check("a broken .git folder is skipped and reported instead of stopping the others",
+          results["broken"].startswith("skipped"))
+    check("repositories already allowlisted stay as they are, and a disabled one stays off",
+          results["work"] == "already allowlisted" and results["other"].startswith("disabled, left off")
+          and results["third"] == results["clients/acme/app"] == "allowlisted")
+    (projects / "fourth").mkdir()
+    sh(projects / "fourth", "git", "init", "-q")
+    again = subprocess.run([*cli, "add-repo", str(projects)], env=env, capture_output=True, text=True)
+    check("running it again on the folder adds only the new repository",
+          again.returncode == 0 and "fourth: allowlisted as project 'fourth'" in again.stdout
+          and "1 newly allowlisted" in again.stdout)
+    dotfiles = TMP / "home"
+    (dotfiles / "Projects" / "real").mkdir(parents=True)
+    sh(dotfiles, "git", "init", "-q")
+    sh(dotfiles / "Projects" / "real", "git", "init", "-q")
+    inside = [Path(a["path"]).name for a in sources.add_path(db, dotfiles / "Projects")]
+    check("a folder inside a dotfiles repository allowlists the repositories in it, not the home repository",
+          inside == ["real"])
+    try:
+        sources.add_path(db, projects / "notes")
+        check("a folder with no repositories is an error", False)
+    except CollectorError as e:
+        check("a folder with no repositories is an error", "no Git repositories" in str(e))
+    db.close()
 
 
 if __name__ == "__main__":

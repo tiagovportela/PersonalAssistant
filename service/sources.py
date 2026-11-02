@@ -13,6 +13,9 @@ import paths
 import store
 from batch import CollectorError
 
+SKIP_DIRS = {"node_modules", "venv", "site-packages", "__pycache__", "dist", "build", "target", "__MACOSX"}
+MAX_DEPTH = 4  # how far below a folder to look for repositories
+
 SOURCES_SQL = """
 SELECT s.id, s.kind, s.name, s.locator, s.enabled,
        (SELECT COUNT(*) FROM events e WHERE e.source_id = s.id AND e.gone_at IS NULL) AS events,
@@ -31,7 +34,58 @@ def slug(name, taken):
     return candidate
 
 
-def add_repo(db, path):
+def find_repos(folder):
+    """Git repositories in a folder, up to MAX_DEPTH levels down. Doesn't look inside a repository it
+    found, or inside hidden folders and dependency or build folders."""
+    found = []
+
+    def walk(directory, depth):
+        if (directory / ".git").exists():
+            found.append(directory)
+            return
+        if depth == MAX_DEPTH:
+            return
+        try:
+            children = sorted(p for p in directory.iterdir() if p.is_dir() and not p.is_symlink()
+                              and not p.name.startswith(".") and p.name not in SKIP_DIRS)
+        except PermissionError:
+            return
+        for child in children:
+            walk(child, depth + 1)
+
+    walk(folder, 0)
+    return found
+
+
+def add_path(db, path):
+    """Allowlists a repository, or every repository found in a folder.
+
+    Running it again on the same folder adds repositories created since. A repository
+    found this way that I disabled stays disabled."""
+    path = Path(path).expanduser()
+    if not path.is_dir():
+        raise CollectorError(f"{path} isn't a folder or a Git repository.")
+    if (path / ".git").exists():
+        return [add_repo(db, path)]
+    # Repositories below the folder win over one around it, so ~/Projects inside a
+    # dotfiles repository in ~ means the projects, not the whole home folder.
+    repos = find_repos(path)
+    if repos:
+        results = []
+        for repo in repos:
+            try:
+                results.append(add_repo(db, repo, reenable=False))
+            except CollectorError:  # e.g. a .git folder left over from a copy, not a real repository
+                results.append({"source_id": None, "project": None, "path": str(repo),
+                                "status": "skipped: not a working Git repository"})
+        return results
+    try:
+        return [add_repo(db, path)]  # a folder inside a repository
+    except CollectorError:
+        raise CollectorError(f"There are no Git repositories in {path}.") from None
+
+
+def add_repo(db, path, reenable=True):
     """Allowlists one repository. Returns what happened, for the CLI to print."""
     path = Path(path).expanduser()
     try:
@@ -42,6 +96,10 @@ def add_repo(db, path):
     db.execute("BEGIN IMMEDIATE")
     try:
         row = db.execute("SELECT id, enabled FROM sources WHERE kind = 'git_repo' AND locator = ?", (top,)).fetchone()
+        if row and not row["enabled"] and not reenable:
+            db.execute("ROLLBACK")
+            return {"source_id": row["id"], "project": None, "path": top,
+                    "status": f"disabled, left off (turn it on with: pwi enable {row['id']})"}
         if row:
             status = "already allowlisted" if row["enabled"] else "allowlisted again"
             db.execute("UPDATE sources SET enabled = 1 WHERE id = ?", (row["id"],))

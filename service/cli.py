@@ -1,7 +1,8 @@
 """The `pwi` command: allowlist repositories and collect on demand, until the
 frontend exists. install.py puts a `pwi` launcher in ~/.local/bin.
 
-    pwi add-repo PATH...   allowlist Git repositories (each becomes a project)
+    pwi add-repo PATH...   allowlist Git repositories (each becomes a project); a folder
+                           allowlists every repository in it, and running it again adds new ones
     pwi sources            list sources, what they hold and their last collection
     pwi disable ID         stop collecting a source and hide it from Claude; its data stays
     pwi enable ID          turn it back on
@@ -38,8 +39,9 @@ def print_runs(results):
 def main():
     parser = argparse.ArgumentParser(prog="pwi", description="Personal Work Intelligence layer")
     commands = parser.add_subparsers(dest="command", required=True)
-    add = commands.add_parser("add-repo", help="allowlist Git repositories; each becomes a project")
-    add.add_argument("paths", nargs="+", metavar="PATH")
+    add = commands.add_parser("add-repo", help="allowlist Git repositories, or every repository in a folder")
+    add.add_argument("paths", nargs="+", metavar="PATH",
+                     help="a repository, or a folder such as ~/Projects; run it again to add new repositories")
     commands.add_parser("sources", help="list sources and their last collection")
     for name, text in (("disable", "stop collecting a source and hide it from Claude"), ("enable", "turn a source back on")):
         commands.add_parser(name, help=text).add_argument("source_id", type=int, metavar="ID")
@@ -51,10 +53,11 @@ def main():
     try:
         with closing(store.connect(paths.STORE_PATH)) as db:
             if args.command == "add-repo":
-                added = [sources.add_repo(db, p) for p in args.paths]
+                added = [a for p in args.paths for a in sources.add_path(db, p)]
                 for a in added:
-                    print(f"{a['path']}: {a['status']} as project '{a['project']}'")
-                print("Collecting...")
+                    print(f"{a['path']}: {a['status']}" + (f" as project '{a['project']}'" if a["project"] else ""))
+                new = sum(a["status"] in ("allowlisted", "allowlisted again") for a in added)
+                print(f"{len(added)} repositor{'y' if len(added) == 1 else 'ies'}, {new} newly allowlisted. Collecting...")
                 print_runs(collect.run(paths.STORE_PATH, "manual"))
             elif args.command == "sources":
                 for s in sources.list_sources(db):
