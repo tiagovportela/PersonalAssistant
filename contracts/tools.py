@@ -129,8 +129,10 @@ TOOLS = [
          "Paginated; pass the returned cursor to continue.",
          obj({"day": DAY, "project": PROJECT, "cursor": {"type": "string"}}, ["day"])),
     read("get_evidence",
-         "One piece of evidence in full, and whether it is still available.",
-         obj({"evidence_id": {"type": "integer", "minimum": 1}}, ["evidence_id"])),
+         "One record in full, and whether it is still available. Pass exactly one: event_id for an event "
+         "from get_day, get_week, get_project or search, or evidence_id for a piece of a claim's evidence.",
+         obj({"event_id": {"type": "string", "description": "An event id, e.g. git:commit:<sha>."},
+              "evidence_id": {"type": "integer", "minimum": 1, "description": "From a claim's evidence list."}})),
     read("get_metrics",
          "Quality metrics: collector freshness and gaps, duplicates avoided, citation coverage, "
          "and the share of proposed claims I confirmed, corrected or retracted.",

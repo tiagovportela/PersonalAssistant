@@ -7,10 +7,12 @@ import hashlib
 import json
 import sqlite3
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "service"))
+import store  # noqa: E402
 from store import UPSERT_EVENT  # noqa: E402  the statement the collectors write with
 
 SCHEMA = (HERE / "schema.sql").read_text()
@@ -51,7 +53,7 @@ def main():
     db = sqlite3.connect(":memory:", isolation_level=None)
     db.execute("PRAGMA foreign_keys = ON")
     db.executescript(SCHEMA)
-    check("schema applies", db.execute("select version from schema_version").fetchone() == (1,))
+    check("schema applies", db.execute("select version from schema_version").fetchone() == (2,))
 
     db.execute("insert into sources (id, kind, locator, name, added_at) values"
                " (1, 'git_repo', '/repos/PersonalAssistant', 'PersonalAssistant', ?),"
@@ -72,6 +74,14 @@ def main():
           db.execute("select local_day from events").fetchone() == ("2026-11-03",))
     check("non-UTC timestamps are rejected",
           raises(db, UPSERT_EVENT, event("bad", "x", occurred_at="2026-11-02 23:30:00+01:00")) is not None)
+    db.execute(UPSERT_EVENT, {**event("body1", "Switch the cache"),
+                              "payload": json.dumps({"body": "A latência estava alta", "files": ["service/cache_store.py"]})})
+    def search_events(term):
+        return [r[0] for r in db.execute("select e.id from events_fts f join events e on e.seq = f.rowid"
+                                         " where events_fts match ?", (term,))]
+    check("search finds a commit by its message body, accents folded, and by a file path",
+          search_events("latencia") == ["git:commit:body1"] and search_events("cache_store") == ["git:commit:body1"])
+    db.execute("delete from events where id = 'git:commit:body1'")
     check("payload must be valid JSON",
           raises(db, UPSERT_EVENT, {**event("bad2", "x"), "payload": "{not json"}) is not None)
 
@@ -135,6 +145,55 @@ def main():
         db.execute(f"insert into {table} ({table}) values ('integrity-check')")
     check("search indexes are consistent after updates and deletes", True)
     check("foreign keys hold", db.execute("pragma foreign_key_check").fetchall() == [])
+    test_migration()
+
+
+# The search index of schema version 1, to rebuild a version 1 store for the migration test.
+V1_SEARCH = """
+DROP TRIGGER events_fts_insert; DROP TRIGGER events_fts_delete; DROP TRIGGER events_fts_update; DROP TABLE events_fts;
+CREATE VIRTUAL TABLE events_fts USING fts5 (
+    title, content = 'events', content_rowid = 'seq', tokenize = 'unicode61 remove_diacritics 2');
+CREATE TRIGGER events_fts_insert AFTER INSERT ON events BEGIN
+    INSERT INTO events_fts (rowid, title) VALUES (NEW.seq, NEW.title);
+END;
+CREATE TRIGGER events_fts_delete AFTER DELETE ON events BEGIN
+    INSERT INTO events_fts (events_fts, rowid, title) VALUES ('delete', OLD.seq, OLD.title);
+END;
+CREATE TRIGGER events_fts_update AFTER UPDATE OF title ON events BEGIN
+    INSERT INTO events_fts (events_fts, rowid, title) VALUES ('delete', OLD.seq, OLD.title);
+    INSERT INTO events_fts (rowid, title) VALUES (NEW.seq, NEW.title);
+END;
+UPDATE schema_version SET version = 1;
+"""
+
+
+def test_migration():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "store.db"
+        db = sqlite3.connect(path, isolation_level=None)
+        db.executescript(SCHEMA)
+        db.executescript(V1_SEARCH)
+        db.execute("insert into sources (id, kind, locator, name, added_at) values (1, 'git_repo', '/r', 'r', ?)", (NOW,))
+        db.execute("insert into projects (id, name, created_at) values ('pwi', 'P', ?)", (NOW,))
+        db.execute(UPSERT_EVENT, {**event("old1", "Old commit"), "payload": json.dumps({"body": "porque sim"})})
+        db.close()
+        store.create_or_check(path)
+        db = sqlite3.connect(path)
+        check("an older store is upgraded to the current schema version, keeping its data",
+              db.execute("select version from schema_version").fetchone() == (store.SCHEMA_VERSION,)
+              and db.execute("select count(*) from events").fetchone() == (1,))
+        check("after the upgrade, existing events are searchable by message body",
+              db.execute("select count(*) from events_fts where events_fts match 'porque'").fetchone() == (1,))
+        backup = sqlite3.connect(Path(tmp) / "store.db.bak-v1")
+        check("the store is backed up before the upgrade, at its old version",
+              backup.execute("select version from schema_version").fetchone() == (1,))
+        db.execute("update schema_version set version = 99")
+        db.commit()
+        try:
+            store.create_or_check(path)
+            check("a store from newer code is refused, not downgraded", False)
+        except RuntimeError as e:
+            check("a store from newer code is refused, not downgraded", "newer than this code" in str(e))
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@
 
 - **`get_instructions` is the entry point.** Its description tells Claude to call it first for any of the six experiences, because the Linux beta doesn't show MCP prompts.
 - **Added `list_projects`**, so Claude can find the project id that `get_project`, `search` and the write tools need.
+- **`get_evidence` also takes an `event_id`**, so Claude can open the full commit or session behind any event a read tool returned. Pass exactly one of `event_id` or `evidence_id`; the service rejects anything else.
 - **Added `read_confidential`**, so "unless I explicitly ask" in the brief has a mechanism. Other read tools never return confidential items and have no flag to include them. A flag would let injected text in an email ask for them; an approval-gated tool can't be used without my click.
 
 ## Claude Desktop doesn't enforce schemas
@@ -41,7 +42,9 @@ There are no delete tools.
   ```
   If the data is older than 5 minutes, the tool refreshes first (up to 10 s) and sets `refreshed_now`. A source that didn't refresh in time is listed under `stale_sources`.
 - **Evidence references.** Every claim and event includes `evidence_id` or `event_id`, which Claude cites and can pass to `get_evidence`.
-- **Size and paging.** Results are capped at about 40,000 characters. Longer ones end with `"truncated": true` and a `cursor` to continue.
+- **Size.** Results are capped at about 40,000 characters. Longer ones have their longest lists trimmed, with `"truncated": true` and a gap saying how to narrow the question. Only `read_claude_sessions` pages with a `cursor`.
+- **Freshness.** A read collects first when any source hasn't been tried in the last 5 minutes, waiting up to 10 seconds. What counts is the last attempt, so a source that keeps failing doesn't slow every read; it shows up in `stale_sources` and `source_errors` instead.
+- **Times.** Event times (`at`, `until`) are local, with their UTC offset, e.g. `2026-11-02T23:30+01:00`.
 - **Errors.** Bad input or an unknown id is a tool error (`isError: true`) with a one-line reason. An unknown tool name is a JSON-RPC error. If the service is down, the bridge returns a JSON-RPC `-32000` error.
 
 ## What each tool returns
@@ -50,13 +53,13 @@ There are no delete tools.
 |---|---|
 | `get_instructions` | The experience's template from [`instructions/`](instructions), followed by the shared rules in [`common.md`](instructions/common.md): steps, which tools and connectors to use, the output structure from the brief's appendix, and the labelling, evidence and privacy rules. [`experiences.py`](experiences.py) serves the same text as MCP prompts. |
 | `list_projects` | `projects[]`: `id`, `name`, `status`, `aliases[]`, `last_activity_day`. |
-| `search` | `results[]`: `item_type`, `id`, `title` or `text`, `project`, `local_day`, a `snippet` with the match, and `label` for claims. Best match first. |
-| `get_day` | `day`, `events_by_project{}` (commits, merges, pushes, sessions with times), `claims[]` about that day, `due[]` commitments due that day or overdue, `unconfirmed_count`, `session_notes[]`. |
-| `get_week` | `week` (Monday–Sunday), `by_project{}` with event counts and claims, `milestones[]` (merges, releases), `aging[]` (overdue commitments, open blockers, claims unconfirmed for more than 7 days), `unconfirmed_count`. |
-| `get_project` | `objective` (the latest session note or fact, with its date), `state` (branch, last commit, ahead/behind, uncommitted changes, when observed), `blockers[]`, `decisions[]` (last 10), `commitments[]` (open), `last_activity_day`, and `lookups[]`: connector queries to run for live data, e.g. open PRs and CI for `github:owner/repo`. |
-| `list_unconfirmed` | `claims[]`, oldest first, each with its full evidence list and `age_days`. Also `days_missing_session_notes[]`: each `day` and `project` with Claude Code sessions but no session note, oldest first, with `session_file_expires_on` so the review can start with what Claude Code will delete first. |
+| `search` | `results[]`: `item_type` (`event`, `claim` or `artifact`), `id`, `title` or `text`, `project`, `local_day`, a `snippet` with the match in «», and `label` for claims. Best match first. Events match on their title and, for commits, the message body and file paths. Any word matches; longer words also match as prefixes. |
+| `get_day` | `day`, `events_by_project{}` (commits, merges, pushes, sessions with times, and `end_of_day_state`, the last Git snapshot of the day), `claims[]` about that day, `due[]` commitments due that day or overdue, `unconfirmed_count`, `session_notes[]`. An empty day's `gaps` say why, e.g. a weekend or before the oldest event. |
+| `get_week` | `week` (Monday–Sunday), `by_project{}` with event counts (my commits and others' apart), `active_days` and claims, `milestones[]` (merges; releases come from the GitHub connector), `aging[]` (overdue commitments, open blockers, claims unconfirmed for more than 7 days, each with `kind` and `age_days`), `unconfirmed_count`. |
+| `get_project` | `objective` (the latest session note or fact, with its date), `state` (branch, last commit and push, ahead/behind, uncommitted changes, when observed), `recent_sessions[]` (last 5) and `recent_commits[]` (last 10), `blockers[]`, `decisions[]` (last 10), `commitments[]` (open), `last_activity_day`, and `lookups[]`: connector queries to run for live data, e.g. open PRs and CI for the GitHub repository. An unknown or confidential project is *not found*, with the known project ids. |
+| `list_unconfirmed` | `claims[]`, oldest first, each with its full evidence list and `age_days`. Session notes aren't included: Claude writes them during the review. Also `days_missing_session_notes[]`: each `day` and `project` with Claude Code sessions but no session note, oldest first, with `session_file_expires_on` so the review can start with what Claude Code will delete first. |
 | `read_claude_sessions` | `sessions[]`: `session_id`, `project`, `start`, `end`, then `turns[]` of my prompts and Claude's final replies with secrets redacted (no tool output). Also `cursor`. |
-| `get_evidence` | The evidence row and what it points to. `status` is `available`, `expired` (retention removed the event; includes `expired_at`), or `online`. For `online`, Claude re-reads the source itself and reports *source changed* if `source_version` differs, or *source unavailable*. |
+| `get_evidence` | For an `event_id`: the full `event` (payload with message body and files, or the session file), `status` (`available`, or `gone` if rebased away or the session file was deleted), and `cited_by[]`, the claims using it as evidence. For an `evidence_id`: the same for its event, or `status` `expired` (retention removed the event; includes `expired_at`), or `online` with the artifact, `read_at` and `source_version`. For `online`, Claude re-reads the source itself and reports *source changed* if `source_version` differs, or *source unavailable*. |
 | `get_metrics` | `collectors[]` (last success, runs, gaps against the schedule, duplicates avoided), `citation_coverage`, and `claims` counts: proposed, confirmed, corrected, retracted. |
 | `propose_claim` | `claim_id`, `version`: 1, `label`: unconfirmed, `created`: true. On an exact duplicate (same type, project and normalised text) it returns the existing claim with `created`: false. If another current claim on the same project shares key terms, it adds `possible_contradictions[]` for Claude to check and, if needed, link. |
 | `update_claim` | `claim_id`, `version`, `label`. A text change by Claude resets a verified claim to unconfirmed. Evidence links carry over, plus `add_evidence`. |

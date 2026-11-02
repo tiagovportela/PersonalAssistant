@@ -85,9 +85,9 @@ def main():
         try:
             check("socket is owner-only (0600) in an owner-only dir (0700)",
                   sock.stat().st_mode & 0o777 == 0o600 and sock.parent.stat().st_mode & 0o777 == 0o700)
-            check("the store is created owner-only, with schema version 1",
+            check("the store is created owner-only, at the current schema version",
                   db_path.stat().st_mode & 0o777 == 0o600 and db_path.parent.stat().st_mode & 0o777 == 0o700
-                  and sqlite3.connect(db_path).execute("select version from schema_version").fetchone() == (1,))
+                  and sqlite3.connect(db_path).execute("select version from schema_version").fetchone() == (2,))
             check("bridge connects once the service is up", rpc("ping").get("result") == {})
 
             init = rpc("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
@@ -112,7 +112,7 @@ def main():
                   and sqlite3.connect(db_path).execute("select count(*) from claims").fetchone() == (0,))
 
             day = data_of(call("get_day", {"day": "2026-11-02"}))
-            check("a read tool that isn't built yet says not found, with gaps and coverage",
+            check("get_day on an empty store says not found, with gaps and coverage",
                   day["found"] is False and day["gaps"] and "coverage" in day)
 
             empty = data_of(call("list_projects"))

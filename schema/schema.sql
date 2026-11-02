@@ -1,4 +1,5 @@
--- Personal Work Intelligence layer: SQLite schema, Phase 1 draft (schema version 1).
+-- Personal Work Intelligence layer: SQLite schema, Phase 1 draft (schema version 2).
+-- A store made by an older version is upgraded by the files in migrations/.
 --
 -- Times are UTC text, 'YYYY-MM-DDTHH:MM:SSZ'. Ids that come from a source are
 -- natural keys (git:commit:<sha>), so re-reading a source updates rows instead
@@ -11,7 +12,7 @@
 PRAGMA journal_mode = WAL;
 
 CREATE TABLE schema_version (version INTEGER NOT NULL) STRICT;
-INSERT INTO schema_version VALUES (1);
+INSERT INTO schema_version VALUES (2);
 
 -- Sources: each allowlisted repository, folder or profile ------------------
 
@@ -259,21 +260,29 @@ WHERE cc.status <> 'retracted'
                                     WHERE l.item_type = 'artifact' AND l.item_id = ev.artifact_id)));
 
 -- Keyword search -----------------------------------------------------------
--- External-content FTS5 tables keyed on the stable seq columns. Every claim version
--- is indexed; search joins current_claims so only current text matches. Diacritics
--- are folded, so 'decisao' finds 'decisão'.
+-- FTS5 tables keyed on the stable seq columns. Every claim version is indexed;
+-- search joins current_claims so only current text matches. Diacritics are
+-- folded, so 'decisao' finds 'decisão'.
+--
+-- events_fts keeps its own copy of an event's searchable text: the title, plus
+-- `details` from the payload (a commit's redacted message body and file paths,
+-- a push's branch), because the reasons behind a change are usually in the body.
 
 CREATE VIRTUAL TABLE events_fts USING fts5 (
-    title, content = 'events', content_rowid = 'seq', tokenize = 'unicode61 remove_diacritics 2');
+    title, details, tokenize = 'unicode61 remove_diacritics 2');
 CREATE TRIGGER events_fts_insert AFTER INSERT ON events BEGIN
-    INSERT INTO events_fts (rowid, title) VALUES (NEW.seq, NEW.title);
+    INSERT INTO events_fts (rowid, title, details) VALUES (NEW.seq, NEW.title,
+        COALESCE(json_extract(NEW.payload, '$.body'), '') || ' ' || COALESCE(json_extract(NEW.payload, '$.branch'), '')
+        || ' ' || COALESCE((SELECT group_concat(value, ' ') FROM json_each(NEW.payload, '$.files')), ''));
 END;
 CREATE TRIGGER events_fts_delete AFTER DELETE ON events BEGIN
-    INSERT INTO events_fts (events_fts, rowid, title) VALUES ('delete', OLD.seq, OLD.title);
+    DELETE FROM events_fts WHERE rowid = OLD.seq;
 END;
-CREATE TRIGGER events_fts_update AFTER UPDATE OF title ON events BEGIN
-    INSERT INTO events_fts (events_fts, rowid, title) VALUES ('delete', OLD.seq, OLD.title);
-    INSERT INTO events_fts (rowid, title) VALUES (NEW.seq, NEW.title);
+CREATE TRIGGER events_fts_update AFTER UPDATE OF title, payload ON events BEGIN
+    DELETE FROM events_fts WHERE rowid = OLD.seq;
+    INSERT INTO events_fts (rowid, title, details) VALUES (NEW.seq, NEW.title,
+        COALESCE(json_extract(NEW.payload, '$.body'), '') || ' ' || COALESCE(json_extract(NEW.payload, '$.branch'), '')
+        || ' ' || COALESCE((SELECT group_concat(value, ' ') FROM json_each(NEW.payload, '$.files')), ''));
 END;
 
 CREATE VIRTUAL TABLE claims_fts USING fts5 (

@@ -97,8 +97,7 @@ def copy_app(commit):
     skip = shutil.ignore_patterns("test_*.py", "__pycache__", "*.pyc")
     shutil.copytree(REPO / "service", new / "service", ignore=skip)
     shutil.copytree(REPO / "contracts", new / "contracts", ignore=skip)
-    (new / "schema").mkdir()
-    shutil.copy2(REPO / "schema" / "schema.sql", new / "schema")
+    shutil.copytree(REPO / "schema", new / "schema", ignore=skip)  # schema.sql and migrations/
     (new / "version.json").write_text(json.dumps({
         "commit": commit,
         "installed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

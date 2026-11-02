@@ -26,6 +26,8 @@ def validate(tool, args):
             for i, item in enumerate(args[field]):
                 if isinstance(item, dict):
                     check_evidence(item, f"{field}[{i}]", errors)
+    if tool == "get_evidence" and isinstance(args, dict) and len(args.keys() & {"event_id", "evidence_id"}) != 1:
+        errors.append("Pass exactly one of event_id (an event from a read tool) or evidence_id (from a claim).")
     return errors
 
 

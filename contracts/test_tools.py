@@ -133,6 +133,9 @@ def main():
     check("numbers outside their range are rejected",
           validate("search", {"query": "x", "limit": 500}) != [] and validate("search", {"query": "x", "limit": True}) != [])
     check("tools with no arguments accept an empty call", validate("list_projects", {}) == [])
+    check("get_evidence takes exactly one of event_id or evidence_id",
+          validate("get_evidence", {"event_id": "git:commit:abc"}) == [] and validate("get_evidence", {"evidence_id": 3}) == []
+          and validate("get_evidence", {}) != [] and validate("get_evidence", {"event_id": "x", "evidence_id": 3}) != [])
     check("the error text tells Claude to retry",
           error_text("propose_claim", missing).endswith("Fix these and call propose_claim again."))
 

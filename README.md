@@ -46,7 +46,7 @@ The service collects at login (catching up after a shutdown) and then every hour
 - **Git:** commits, merges and pushes from the last 90 days, plus a snapshot of the branch, ahead/behind and uncommitted-change counts whenever it changes. Only metadata is kept: subject, message (secrets redacted), author, times, files and line counts. Pushes come from Git's reflog. No hooks are installed, and Git never takes a lock while collecting.
 - **Claude Code:** an index of sessions whose working folder is inside an allowlisted repository: start, end, Claude Code's title for the session (redacted), and prompt count. Session content is never copied; it stays in `~/.claude/projects` until Claude Code deletes it after 30 days.
 
-**Upgrade:** `git pull && python3 install.py`. The service restarts with the new code. Claude Desktop's bridge reconnects on its own, so Claude Desktop only needs a restart when the tool list changes.
+**Upgrade:** `git pull && python3 install.py`. The service restarts with the new code, and upgrades the store if its schema changed, after copying it to `store.db.bak-v<old version>`. Claude Desktop's bridge reconnects on its own, so Claude Desktop only needs a restart when the tool list changes.
 
 **Uninstall:** `python3 install.py --uninstall`. The store in `~/.local/share/pwi` is kept.
 
@@ -66,9 +66,9 @@ The service collects at login (catching up after a shutdown) and then every hour
 
 | Folder | Contents |
 |---|---|
-| [`service/`](service) | The background service (`server.py`), the bridge Claude Desktop starts (`bridge.py`), the `pwi` CLI (`cli.py`), the collectors (`collect_*.py`), secret redaction, the store setup and the MCP handlers. |
+| [`service/`](service) | The background service (`server.py`), the bridge Claude Desktop starts (`bridge.py`), the `pwi` CLI (`cli.py`), the collectors (`collect_*.py`), the read tools (`reads.py`), secret redaction, the store setup and the MCP handlers. |
 | [`contracts/`](contracts) | The MCP tool contracts, validation and the six experiences' instructions. |
-| [`schema/`](schema) | The SQLite schema. |
+| [`schema/`](schema) | The SQLite schema, and `migrations/` that upgrade an older store. |
 | [`spikes/`](spikes) | Phase 0 spike, kept for reference. |
 
 ## Tests
@@ -76,7 +76,7 @@ The service collects at login (catching up after a shutdown) and then every hour
 Each test uses temporary folders and never touches an installed layer. Run them on both Python versions before pushing:
 
 ```bash
-for t in schema/test_schema.py contracts/test_tools.py contracts/test_experiences.py service/test_service.py service/test_collectors.py test_install.py; do
+for t in schema/test_schema.py contracts/test_tools.py contracts/test_experiences.py service/test_service.py service/test_collectors.py service/test_reads.py test_install.py; do
   python3 -I "$t" || break
 done
 ```
@@ -85,4 +85,4 @@ To test on Python 3.14 on the dev PC, use `uv python install 3.14` and run the s
 
 ## Status
 
-The service serves all 17 tools with validation and collects Git and Claude Code sessions. `get_instructions`, the prompts and `list_projects` work. The other tools answer that they aren't built yet: read tools return *not found*, and write tools save nothing. Next: the read tools over collected data (`get_day`, `get_project`, `search`).
+The service serves all 17 tools with validation and collects Git and Claude Code sessions. Working: `get_instructions` and the prompts, and the read tools `list_projects`, `get_day`, `get_week`, `get_project`, `search`, `list_unconfirmed` and `get_evidence`. Daily briefing, project resumption, search and weekly review work end to end, using connectors for the online sources. Not built yet: the write tools (they save nothing), `read_claude_sessions`, `get_metrics` and `read_confidential`. Next: claims and session notes, for the end-of-day review.

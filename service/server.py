@@ -105,7 +105,8 @@ async def main():
                 except json.JSONDecodeError:
                     await send(writer, {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}})
                     continue
-                reply = reply_to(layer, msg)
+                # In a thread: a read may wait for a refresh, and other clients mustn't wait with it.
+                reply = await asyncio.to_thread(reply_to, layer, msg)
                 if reply is not None:
                     await send(writer, reply)
         except (ConnectionError, ValueError):  # ValueError: a line over the read limit

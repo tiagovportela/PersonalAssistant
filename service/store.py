@@ -2,11 +2,13 @@
 
 import os
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schema" / "schema.sql"
-SCHEMA_VERSION = 1
+MIGRATIONS_DIR = SCHEMA_PATH.with_name("migrations")  # NNN_name.sql takes the store from version NNN-1 to NNN
+SCHEMA_VERSION = 2
 
 # The one way events are written: re-reading a record never duplicates it, and only
 # a real content change (a correction, a session that grew) touches the row.
@@ -45,8 +47,49 @@ def connect(path):
     return db
 
 
+def statements(script):
+    """The statements in a SQL script, keeping trigger bodies whole."""
+    buffer = ""
+    for line in script.splitlines(keepends=True):
+        buffer += line
+        if sqlite3.complete_statement(buffer):
+            yield buffer.strip()
+            buffer = ""
+    leftover = [line for line in buffer.splitlines() if line.strip() and not line.strip().startswith("--")]
+    if leftover:
+        raise ValueError(f"incomplete SQL statement: {leftover[0]}")
+
+
+def migrate(path):
+    """Upgrades an older store to SCHEMA_VERSION in one transaction, after backing it up once per version."""
+    with closing(connect(path)) as db:
+        version = db.execute("SELECT version FROM schema_version").fetchone()[0]
+        if version > SCHEMA_VERSION:
+            raise RuntimeError(f"{path} has schema version {version}, newer than this code ({SCHEMA_VERSION}). "
+                               "Install the newer code again.")
+        if version == SCHEMA_VERSION:
+            return
+        backup = path.with_name(f"{path.name}.bak-v{version}")
+        if not backup.exists():
+            with closing(sqlite3.connect(backup)) as copy:
+                db.backup(copy)
+            os.chmod(backup, 0o600)
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            # Read again under the lock: the service and the CLI may both have started a migration.
+            version = db.execute("SELECT version FROM schema_version").fetchone()[0]
+            for number in range(version + 1, SCHEMA_VERSION + 1):
+                [script] = MIGRATIONS_DIR.glob(f"{number:03d}_*.sql")
+                for statement in statements(script.read_text(encoding="utf-8")):
+                    db.execute(statement)
+            db.execute("COMMIT")
+        except BaseException:
+            db.execute("ROLLBACK")
+            raise
+
+
 def create_or_check(path):
-    """Creates the store if it's missing, then checks it has the schema version this code expects."""
+    """Creates the store if it's missing, upgrades it if it's older, and checks its schema version."""
     path = Path(path)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     path.parent.chmod(0o700)
@@ -61,6 +104,7 @@ def create_or_check(path):
             db.close()
         os.chmod(new, 0o600)
         new.replace(path)
+    migrate(path)
     db = connect(path)
     try:
         version = db.execute("SELECT version FROM schema_version").fetchone()[0]

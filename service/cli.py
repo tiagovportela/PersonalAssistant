@@ -15,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import argparse  # noqa: E402
+import logging  # noqa: E402
 import os  # noqa: E402
 from contextlib import closing  # noqa: E402
 
@@ -48,6 +49,7 @@ def main():
     commands.add_parser("collect", help="collect every enabled source now")
     args = parser.parse_args()
 
+    logging.basicConfig(level=logging.ERROR, format="%(levelname)s %(message)s")  # errors are printed per source
     os.umask(0o077)
     store.create_or_check(paths.STORE_PATH)
     try:
