@@ -147,7 +147,8 @@ def app_usage_command(db, args):
         print(f"  Fallback: {s['fallback']}")
     ext = gnome_extension.status()
     print(f"  GNOME Shell {ext['gnome_shell'] or 'not found'}; extension "
-          + ("running" if ext["running"] else "installed, waiting for a new login" if ext["installed"] else "not installed"))
+          + ("running" if ext["running"] else "installed, waiting for a new login: log out and back in once"
+             if ext["installed"] else "not installed"))
     return 0
 
 

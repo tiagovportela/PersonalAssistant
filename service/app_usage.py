@@ -327,7 +327,9 @@ class Sampler:
 
     def stats(self, chosen):
         average = statistics.fmean(self.durations) if self.durations else None
-        return {"mode_in_use": "time" if self.fallback else chosen, "extension": self.extension,
+        # Without the extension, window details can't be read, so only active and idle time is recorded.
+        in_use = "time" if self.fallback or (chosen != "time" and self.extension == "missing") else chosen
+        return {"mode_in_use": in_use, "extension": self.extension,
                 "fallback": self.fallback, "samples_since_start": self.samples,
                 "average_sample_ms": round(average * 1000, 1) if average is not None else None,
                 "cpu_share_at_most": round(average / self.interval, 4) if average is not None else None,

@@ -318,8 +318,9 @@ def test_sampler(db, call):
     missing = app_usage.Sampler(paths.STORE_PATH, gnome.idle_fn, lambda: None, gnome.clock)
     gnome.now = start + 9000
     missing.tick()
-    check("without the extension, active time is still recorded", missing.extension == "missing"
-          and missing.spans.current["kind"] == "active")
+    check("without the extension, active time is still recorded, and the status says only time is",
+          missing.extension == "missing" and missing.spans.current["kind"] == "active"
+          and missing.stats("titles")["mode_in_use"] == "time")
     app_usage.turn_off(db)
     off = app_usage.Sampler(paths.STORE_PATH, gnome.idle_fn, gnome.window_fn, gnome.clock)
     off.tick()
