@@ -69,6 +69,7 @@ def routes():
         ("GET", r"/api/claims", lambda app, db, m, q, b: admin.claims(
             db, one(q, "status"), one(q, "project"), one(q, "q"), one(q, "limit") or 200)),
         ("GET", r"/api/claims/([^/]+)", lambda app, db, m, q, b: admin.claim_history(db, unquote(m[1]))),
+        ("PUT", r"/api/claims/([^/]+)", lambda app, db, m, q, b: admin.edit_claim(db, unquote(m[1]), b)),
         ("POST", r"/api/impact", lambda app, db, m, q, b: admin.impact(db, b.get("items"))),
         ("POST", r"/api/delete", lambda app, db, m, q, b: admin.delete(db, b.get("items"), b.get("decisions") or {})),
         ("GET", r"/api/labels", lambda app, db, m, q, b: admin.labels(db)),

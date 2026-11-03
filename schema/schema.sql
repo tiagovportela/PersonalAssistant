@@ -1,4 +1,4 @@
--- Personal Work Intelligence layer: SQLite schema (schema version 5).
+-- Personal Work Intelligence layer: SQLite schema (schema version 6).
 -- A store made by an older version is upgraded by the files in migrations/.
 --
 -- Times are UTC text, 'YYYY-MM-DDTHH:MM:SSZ'. Ids that come from a source are
@@ -12,7 +12,7 @@
 PRAGMA journal_mode = WAL;
 
 CREATE TABLE schema_version (version INTEGER NOT NULL) STRICT;
-INSERT INTO schema_version VALUES (5);
+INSERT INTO schema_version VALUES (6);
 
 -- Sources: each allowlisted repository, folder or profile ------------------
 
@@ -151,6 +151,7 @@ END;
 CREATE TABLE claims (
     id          TEXT PRIMARY KEY,               -- 'clm_' + random
     type        TEXT NOT NULL CHECK (type IN ('decision', 'commitment', 'blocker', 'fact', 'session_note')),
+                                                -- the type first proposed; each version has its current one
     created_at  TEXT NOT NULL
 ) STRICT;
 
@@ -170,6 +171,7 @@ CREATE TABLE claim_versions (
     changed_by  TEXT NOT NULL CHECK (changed_by IN ('rule', 'claude', 'me')), -- who made this version
     reason      TEXT,                           -- 'correction', 'confirmed in review', ...
     created_at  TEXT NOT NULL,
+    type        TEXT CHECK (type IS NULL OR type IN ('decision', 'commitment', 'blocker', 'fact', 'session_note')),  -- NULL: as in claims.type
     UNIQUE (claim_id, version),
     CHECK (status <> 'supported' OR changed_by = 'me')   -- only I can verify a claim
 ) STRICT;
@@ -195,7 +197,7 @@ CREATE TABLE claim_evidence (
 ) STRICT;
 
 CREATE VIEW current_claims AS
-SELECT c.id, c.type, c.created_at AS first_proposed_at,
+SELECT c.id, COALESCE(v.type, c.type) AS type, c.type AS proposed_type, c.created_at AS first_proposed_at,
        v.version, v.status, v.text, v.project_id, v.about_day, v.due_at, v.owner,
        v.confidence, v.method, v.changed_by, v.reason, v.created_at AS version_at, v.seq
 FROM claims c

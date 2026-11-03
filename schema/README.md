@@ -61,6 +61,8 @@ Phase 3 will add `meeting.recording` and `notes.file`.
 
 Schema 5 (Phase 4) adds `settings` (`app_usage.mode`), and indexes a visit's address and a span's app for search.
 
+Schema 6 records the type on each claim version, since I can change it in the frontend; `claims.type` keeps the type Claude first proposed (`current_claims.proposed_type`), which the metrics judge Claude's proposals by.
+
 ## Decided (2 Nov 2026)
 
 1. **Projects:** one project per allowlisted repository, created automatically with a `repo_path` alias. I rename projects and edit their aliases in the frontend. Claude adds online aliases (GitHub, Notion, Drive, Gmail, Chat, calendar) through `add_project_alias`, and only I remove them.

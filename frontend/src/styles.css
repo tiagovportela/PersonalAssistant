@@ -113,11 +113,11 @@ button { font: inherit; color: inherit; }
 .link.danger { color: var(--red); text-decoration-color: color-mix(in srgb, var(--red) 40%, transparent); }
 .link:disabled { opacity: 0.5; cursor: not-allowed; }
 
-input, select {
+input, select, textarea {
   font: inherit; color: var(--ink); background: var(--sheet);
   border: 1px solid var(--rule); border-radius: 3px; padding: 0.35rem 0.55rem;
 }
-input:focus-visible, select:focus-visible { border-color: var(--focus); }
+input:focus-visible, select:focus-visible, textarea:focus-visible { border-color: var(--focus); }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); }
 
 .add-form { margin-bottom: 2rem; max-width: 40rem; }
@@ -146,6 +146,13 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); }
 .table tbody th { text-align: left; font-size: inherit; color: var(--muted); font-weight: 400; border-bottom: 1px solid var(--rule); padding: 0.55rem 1.5rem 0.55rem 0; width: 14rem; }
 .table.compact td { padding-top: 0.45rem; padding-bottom: 0.45rem; }
 .table tr.off td { color: var(--muted); }
+.claim-edit { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0.75rem 1rem; }
+.claim-edit label { display: grid; gap: 0.25rem; }
+.claim-edit .wide { grid-column: 1 / -1; }
+.claim-edit input, .claim-edit select { min-width: 0; width: 100%; }
+.action-list { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.3rem 1rem; max-width: 15rem; margin-left: auto; }
+.table .actions .action-list > * + * { margin-left: 0; }
+.claim-edit textarea { width: 100%; resize: vertical; font: inherit; }
 .table tr.detail td { background: var(--sheet); padding: 1rem 1.25rem; }
 .table .number { text-align: right; font-variant-numeric: tabular-nums; }
 .table .actions { text-align: right; white-space: nowrap; }

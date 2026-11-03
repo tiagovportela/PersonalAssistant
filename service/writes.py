@@ -113,11 +113,12 @@ def add_version(db, claim_id, current, changes, status, changed_by, reason):
     version = current["version"] + 1 if current else 1
     fields = {k: (current["project_id" if k == "project" else k] if current else None) for k in CONTENT_FIELDS}
     fields.update({k: v for k, v in changes.items() if k in CONTENT_FIELDS})
-    db.execute("INSERT INTO claim_versions (claim_id, version, status, text, project_id, about_day, due_at, owner,"
-               " confidence, method, changed_by, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-               (claim_id, version, status, fields["text"], fields["project"], fields["about_day"], fields["due_at"],
-                fields["owner"], fields["confidence"], current["method"] if current else "claude", changed_by,
-                reason, store.now()))
+    kind = changes.get("type") or (current["type"] if current else None)
+    db.execute("INSERT INTO claim_versions (claim_id, version, status, type, text, project_id, about_day, due_at, owner,"
+               " confidence, method, changed_by, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+               (claim_id, version, status, kind, fields["text"], fields["project"], fields["about_day"], fields["due_at"],
+                fields["owner"], fields["confidence"], changes.get("method") or (current["method"] if current else "claude"),
+                changed_by, reason, store.now()))
     return version
 
 
@@ -230,8 +231,9 @@ def save_session_note(db, args):
         if note is None:
             claim_id = "clm_" + secrets.token_hex(5)
             db.execute("INSERT INTO claims (id, type, created_at) VALUES (?, 'session_note', ?)", (claim_id, store.now()))
-            version = add_version(db, claim_id, None, {"text": args["text"].strip(), "project": project["id"],
-                                                        "about_day": args["day"]}, "proposed", "claude", None)
+            version = add_version(db, claim_id, None, {"type": "session_note", "text": args["text"].strip(),
+                                                        "project": project["id"], "about_day": args["day"]},
+                                  "proposed", "claude", None)
             created = True
         else:
             claim_id = note["id"]

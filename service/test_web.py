@@ -170,6 +170,30 @@ def main():
         check("a claim's full history is shown, with its evidence",
               history["versions"][0]["evidence"][0]["event_title"] in ("First change", "Second change"))
 
+        # editing a claim: each change is a new version, recorded as mine
+        status, done, _ = request("PUT", f"/api/claims/{both}", {"status": "supported"})
+        current = db.execute("SELECT * FROM current_claims WHERE id = ?", (both,)).fetchone()
+        check("I can confirm a claim in the frontend: a new version, by me, with its evidence carried over",
+              status == 200 and current["status"] == "supported" and current["changed_by"] == "me"
+              and current["version"] == 2
+              and db.execute("SELECT COUNT(*) FROM claim_evidence WHERE claim_id = ? AND version = 2", (both,)).fetchone()[0] == 2)
+        status, done, _ = request("PUT", f"/api/claims/{both}", {
+            "type": "commitment", "text": "Keep the API stable until the 2.0 release", "due_at": "2026-12-01", "owner": "me"})
+        current = db.execute("SELECT * FROM current_claims WHERE id = ?", (both,)).fetchone()
+        history = request("GET", f"/api/claims/{both}")[1]["versions"]
+        check("I can change its type, text, due date and owner; my edit is verified, and Claude sees the new type",
+              status == 200 and done["changed"] == ["due_at", "owner", "text", "type"] and current["type"] == "commitment"
+              and current["proposed_type"] == "decision" and current["status"] == "supported" and current["method"] == "me"
+              and [v["type"] for v in history] == ["decision", "decision", "commitment"]
+              and db.execute("SELECT type FROM claims_for_claude WHERE id = ?", (both,)).fetchone()[0] == "commitment")
+        for body, reason in (({"type": "session_note"}, "A session note stays"), ({"due_at": "next friday"}, "due date"),
+                             ({"text": " "}, "needs its text"), ({"project": "nope"}, "no project"),
+                             ({"status": "supported"}, "Nothing would change")):
+            status, refused, _ = request("PUT", f"/api/claims/{both}", body)
+            check(f"an edit is refused when it's wrong ({reason}), saying why", status == 400 and reason in refused["error"])
+        check("a refused edit saves nothing",
+              db.execute("SELECT MAX(version) FROM claim_versions WHERE claim_id = ?", (both,)).fetchone()[0] == 3)
+
         # deletion: every claim relying on deleted evidence needs a decision
         item = [{"type": "event", "id": ids["First change"]}]
         impact = request("POST", "/api/impact", {"items": item})[1]

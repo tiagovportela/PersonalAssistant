@@ -165,6 +165,9 @@ CREATE TRIGGER events_fts_update AFTER UPDATE OF title ON events BEGIN
 END;
 DROP TABLE connectors;
 DROP TABLE settings;
+DROP VIEW claims_for_claude;
+DROP VIEW current_claims;
+ALTER TABLE claim_versions DROP COLUMN type;
 UPDATE schema_version SET version = 1;
 """
 

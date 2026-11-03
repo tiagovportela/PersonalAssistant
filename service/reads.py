@@ -785,8 +785,8 @@ def claim_metrics(db, since):
     total, by_type = dict(blank), {}
     with_project = project_corrected = 0
     for c in rows:
-        versions = db.execute("SELECT status, text, project_id, changed_by FROM claim_versions WHERE claim_id = ?"
-                              " ORDER BY version", (c["id"],)).fetchall()
+        versions = db.execute("SELECT status, text, COALESCE(type, ?) AS type, project_id, changed_by FROM claim_versions"
+                              " WHERE claim_id = ? ORDER BY version", (c["type"], c["id"])).fetchall()
         status = versions[-1]["status"]
         counts = by_type.setdefault(c["type"], dict(blank))
         for bucket in (total, counts):
@@ -796,7 +796,7 @@ def claim_metrics(db, since):
             bucket["retracted"] += status == "retracted"
             bucket["superseded"] += status == "superseded"
             bucket["still_unconfirmed"] += status == "proposed"
-            bucket["corrected"] += any(v["text"] != versions[0]["text"] for v in versions[1:])
+            bucket["corrected"] += any(v["text"] != versions[0]["text"] or v["type"] != c["type"] for v in versions[1:])
         if any(v["project_id"] for v in versions):
             with_project += 1
             project_corrected += any(v["project_id"] != versions[0]["project_id"] for v in versions[1:])

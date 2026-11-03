@@ -33,7 +33,7 @@ A folder allowlists every Git repository in it, up to 4 levels down. It skips hi
 
 ## Using it
 
-**The frontend** (`pwi open`) is where you see what the layer holds and control it: sources and projects, claims with their full history, activity, confidential labels (the only place to remove one), retention per kind of data, and the audit trail. Deleting is done only here: deleting evidence lists the claims that rely on it, and you decide for each one whether to keep it (its evidence shows as deleted), retract it, or delete it too. The frontend listens on 127.0.0.1 only, on a new port and with a new sign-in link each time the service starts; `pwi open` always finds them.
+**The frontend** (`pwi open`) is where you see what the layer holds and control it: sources and projects, claims with their full history (where you can also confirm, retract or edit them: type, text, project, dates, owner and status, each change a new version recorded as yours, verified unless you choose otherwise), activity, confidential labels (the only place to remove one), retention per kind of data, and the audit trail. Deleting is done only here: deleting evidence lists the claims that rely on it, and you decide for each one whether to keep it (its evidence shows as deleted), retract it, or delete it too. The frontend listens on 127.0.0.1 only, on a new port and with a new sign-in link each time the service starts; `pwi open` always finds them.
 
 
 | Command | What it does |
