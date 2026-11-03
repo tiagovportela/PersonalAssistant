@@ -45,3 +45,14 @@ The safeguard that matters is the **OAuth scope**: if the sign-in only grants `c
 **Decided (2 Nov 2026): option 1.** The layer reads Google Chat itself (`service/chat.py`, `service/google_signin.py`), with only read-only scopes, so no third-party Chat server is installed.
 
 Either way, the Google Cloud project needs the Chat API enabled and an OAuth client of type *Desktop app*. A Workspace admin may have to allow that client, so check before building.
+
+### Google's official Chat MCP server (assessed 3 Nov 2026, not adopted)
+
+Google offers a hosted Chat MCP server ([guide](https://developers.google.com/workspace/chat/api/guides/configure-mcp-server)), at `https://chatmcp.googleapis.com/mcp/v1`, added in Claude as a custom connector.
+
+- **Tools:** five read (`search_conversations`, `list_messages`, `search_messages`, `list_memberships`, `get_notification_settings`) and four write (`send_message`, `mark_as_read`, `mark_as_unread`, `update_notification_settings`). Its server-side search is better than the layer's.
+- **Scopes:** besides the read-only ones, it asks for `chat.messages.create`, `chat.users.readstate` and `chat.users.spacesettings`, so Google would allow it to post and change state. Write tools can be turned off in Claude's connector settings, but that's a setting, not a refusal by Google.
+- **Allowlist:** like other connectors, only followed by instruction, not enforced.
+- **Availability:** Google Workspace Developer Preview Program; an admin must enable the Chat API and the Chat MCP API, and the OAuth client must be marked for an AI-powered agent.
+
+**Decision:** keep the layer's reader, which can't write by construction and enforces the allowlist. Revisit when Google's server leaves preview, especially if it can be used with read-only scopes only.

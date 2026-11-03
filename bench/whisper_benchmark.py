@@ -1,5 +1,6 @@
-"""Phase 0 CPU benchmark: which Whisper model transcribes my meetings well
-enough, fast enough, on this laptop (brief §9 and §15).
+"""Phase 0 CPU benchmark: which speech-to-text model transcribes my meetings
+well enough, fast enough, on this laptop (brief §9 and §15): Whisper sizes
+through faster-whisper, and NVIDIA's Parakeet through onnx-asr.
 
     python3 bench/whisper_benchmark.py ~/Recordings/benchmark
 
@@ -13,7 +14,9 @@ The first run creates a separate Python environment in
 bench/requirements.txt, every package checked against its pinned hash. The
 service itself never uses it. Models download from Hugging Face on first use;
 the report records each model's revision and checksum so the chosen one can be
-pinned. Results and transcripts are work data, so they stay in
+pinned. Each model runs with the language detected once per recording (auto),
+and per utterance between pauses (utterance), which handles meetings that switch
+between Portuguese and English. Results and transcripts are work data, so they stay in
 ~/.local/share/pwi/benchmark, outside the repository.
 
 Run it plugged in, with other heavy work closed.
@@ -36,9 +39,24 @@ HERE = Path(__file__).resolve().parent
 DATA = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "pwi"
 VENV = DATA / "bench-venv"
 AUDIO = (".wav", ".mp3", ".m4a", ".ogg", ".opus", ".flac", ".webm", ".mp4", ".aac")
-MODELS = ["tiny", "base", "small", "medium", "large-v3-turbo"]
-# auto: one language for the whole recording; multilingual: per segment, for mixed meetings; pt: Portuguese forced.
-MODES = {"auto": {}, "multilingual": {"multilingual": True}, "pt": {"language": "pt"}}
+MODELS = ["tiny", "base", "small", "medium", "large-v3-turbo", "parakeet-tdt-0.6b-v3"]
+# Not Whisper: NVIDIA Parakeet TDT on ONNX Runtime, through onnx-asr. It detects the language by itself, so it
+# runs once per recording (mode "auto"), with Silero splitting the audio at pauses. Only the int8 files are
+# downloaded (about 670 MB instead of 3 GB).
+PARAKEET = {  # name: (onnx-asr model, Hugging Face repository, quantization)
+    "parakeet-tdt-0.6b-v3": ("nemo-parakeet-tdt-0.6b-v3", "istupakov/parakeet-tdt-0.6b-v3-onnx", "int8"),
+    "parakeet-tdt-0.6b-v3-fp32": ("nemo-parakeet-tdt-0.6b-v3", "istupakov/parakeet-tdt-0.6b-v3-onnx", None),
+}
+SILERO = "istupakov/silero-vad-onnx"
+# auto: one language for the whole recording. utterance: split at pauses and detect each piece's language,
+# for meetings that switch language. multilingual: Whisper's own detection per 30-second window.
+# pt: Portuguese forced.
+MODES = {"auto": {}, "utterance": {}, "multilingual": {"multilingual": True}, "pt": {"language": "pt"}}
+# The model that detects each utterance's language. tiny is fast but labelled 3 of 11 Portuguese windows as
+# English in the sample run; the tested model itself labels them right but runs at under 1x real time
+# (docs/whisper_benchmark.md). --detector same uses the tested model.
+DETECTOR = "tiny"
+LANGUAGES = ("pt", "en")  # utterance mode chooses between these, so Portuguese isn't taken for Galician or Spanish
 GOOD_ENOUGH = 0.02  # a model within 2 points of the best word error rate counts as as good
 FAST_ENOUGH = 2.0  # at least twice as fast as real time: an hour's meeting in half an hour while idle
 USABLE = 0.25  # above this word error rate, even the best model isn't worth suggesting
@@ -70,7 +88,46 @@ def ensure_environment():
 
 # One model and mode, in its own process, so its memory is measured alone ------------------
 
-def worker(model_name, mode, files, threads):
+def parakeet_worker(model_name, files, threads):
+    import resource
+
+    import onnx_asr
+    import onnxruntime
+    from faster_whisper import decode_audio
+    from huggingface_hub import HfApi, snapshot_download
+
+    name, repo, quantization = PARAKEET[model_name]
+    weights = ["*.int8.onnx"] if quantization else ["encoder-model.onnx", "encoder-model.onnx.data", "decoder_joint-model.onnx"]
+    # Into plain folders, not the Hugging Face cache: ONNX Runtime refuses weights kept in a separate .data file
+    # when the cache's symlinks put it in another folder. Pinned to the revision current when downloading.
+    revision = HfApi().model_info(repo).sha
+    path = Path(snapshot_download(repo, revision=revision, local_dir=DATA / "models" / repo.split("/")[1],
+                                  allow_patterns=["config.json", "vocab.txt", "nemo128.onnx", *weights]))
+    vad_path = Path(snapshot_download(SILERO, local_dir=DATA / "models" / SILERO.split("/")[1],
+                                      allow_patterns=["config.json", "silero_vad.onnx"]))
+    options = onnxruntime.SessionOptions()
+    options.intra_op_num_threads = threads
+    started = time.perf_counter()
+    model = onnx_asr.load_model(name, path, quantization=quantization, sess_options=options).with_vad(
+        onnx_asr.load_vad("silero", vad_path, sess_options=options))
+    load = time.perf_counter() - started
+    weights = path / ("encoder-model.int8.onnx" if quantization else "encoder-model.onnx.data")
+    out = {"model": model_name, "mode": "auto", "load_s": round(load, 2), "files": [], "revision": revision,
+           "sha256": hashlib.sha256(weights.read_bytes()).hexdigest()}
+    for file in files:
+        audio = decode_audio(file)
+        started = time.perf_counter()
+        text = " ".join(segment.text.strip() for segment in model.recognize(audio))
+        wall = time.perf_counter() - started
+        out["files"].append({"file": Path(file).name, "duration_s": round(len(audio) / 16000, 1),
+                             "wall_s": round(wall, 1), "language": "auto", "text": text})
+    out["peak_mb"] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024)
+    print(json.dumps(out))
+
+
+def worker(model_name, mode, files, threads, detector_name=DETECTOR):
+    if model_name in PARAKEET:
+        return parakeet_worker(model_name, files, threads)
     import resource
 
     from faster_whisper import WhisperModel, decode_audio
@@ -80,19 +137,57 @@ def worker(model_name, mode, files, threads):
     started = time.perf_counter()
     model = WhisperModel(str(path), device="cpu", compute_type="int8", cpu_threads=threads)
     load = time.perf_counter() - started
+    detector = (model if detector_name in (None, "same", model_name) else
+                WhisperModel(str(download_model(detector_name)), device="cpu", compute_type="int8", cpu_threads=threads)
+                ) if mode == "utterance" else None
     weights = path / "model.bin"
     out = {"model": model_name, "mode": mode, "load_s": round(load, 2), "files": [],
            "revision": path.name, "sha256": hashlib.sha256(weights.read_bytes()).hexdigest() if weights.exists() else None}
     for file in files:
-        duration = len(decode_audio(file)) / 16000
+        audio = decode_audio(file)
+        duration = len(audio) / 16000
         started = time.perf_counter()
-        segments, info = model.transcribe(file, vad_filter=True, beam_size=5, **MODES[mode])
-        text = " ".join(s.text.strip() for s in segments)  # transcription happens while iterating
+        if mode == "utterance":
+            text, language = by_utterance(model, audio, detector)
+        else:
+            segments, info = model.transcribe(file, vad_filter=True, beam_size=5, **MODES[mode])
+            text = " ".join(s.text.strip() for s in segments)  # transcription happens while iterating
+            language = info.language
         wall = time.perf_counter() - started
         out["files"].append({"file": Path(file).name, "duration_s": round(duration, 1), "wall_s": round(wall, 1),
-                             "language": info.language, "text": text})
+                             "language": language, "text": text})
     out["peak_mb"] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024)
     print(json.dumps(out))
+
+
+def by_utterance(model, audio, detector):
+    """For meetings that switch language: split at pauses, detect each piece's language among LANGUAGES with the
+    small `detector` model, merge neighbouring pieces in the same language into windows of up to 28 s, and
+    transcribe each window in its language. Whisper pads every input to 30 s, so transcribing piece by piece
+    would cost a full pass each. Returns the text and the windows per language, e.g. "en:9,pt:13"."""
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+
+    pieces = get_speech_timestamps(audio, VadOptions(min_silence_duration_ms=400, speech_pad_ms=200,
+                                                     max_speech_duration_s=28))
+    windows = []  # [language, start, end] in samples
+    for piece in pieces:
+        start, end = piece["start"], piece["end"]
+        if end - start < 1.5 * 16000 and windows:
+            language = windows[-1][0]  # too short to tell; most likely the same speaker going on
+        else:
+            _, _, scores = detector.detect_language(audio[start:end])
+            language = max((s for s in scores if s[0] in LANGUAGES), key=lambda s: s[1])[0]
+        if windows and windows[-1][0] == language and end - windows[-1][1] <= 28 * 16000:
+            windows[-1][2] = end
+        else:
+            windows.append([language, start, end])
+    texts, used = [], {}
+    for language, start, end in windows:
+        used[language] = used.get(language, 0) + 1
+        segments, _ = model.transcribe(audio[start:end], language=language, beam_size=5,
+                                       condition_on_previous_text=False)
+        texts.append(" ".join(s.text.strip() for s in segments))
+    return " ".join(t for t in texts if t), ",".join(f"{k}:{v}" for k, v in sorted(used.items()))
 
 
 # Accuracy ---------------------------------------------------------------------------------
@@ -149,6 +244,16 @@ def report(results, refs, info, threads):
         lines.append(f"| {r['model']} | {r['mode']} | {speed:.1f}× | {r['load_s']:.0f} s | {r['peak_mb']:,} MB | "
                      f"{'n/a' if strict is None else f'{strict:.1%}'} | {'n/a' if folded is None else f'{folded:.1%}'} |")
     lines.append("")
+    files = sorted({f["file"] for r in results for f in r["files"] if f["file"] in refs})
+    if len(files) > 1:  # a recording that goes wrong stands out here, not in the totals
+        lines += ["Word error rate per recording:", "",
+                  "| Model | Language | " + " | ".join(Path(f).stem for f in files) + " |",
+                  "|---|---|" + "---|" * len(files)]
+        for r in results:
+            by_file = {f["file"]: f["text"] for f in r["files"]}
+            cells = [f"{wer(words(refs[f]), words(by_file[f])):.1%}" if f in by_file else "n/a" for f in files]
+            lines.append(f"| {r['model']} | {r['mode']} | " + " | ".join(cells) + " |")
+        lines.append("")
     scored = [r for r in rows if r["wer"] is not None]
     if scored:
         best = min(r["wer"] for r in scored)
@@ -171,7 +276,9 @@ def report(results, refs, info, threads):
                   "judge them, or add a hand-corrected .txt for each recording and run again.", ""]
     lines += ["To pin the chosen model, keep its revision and checksum:", ""]
     for r in {r["model"]: r for r in results}.values():
-        lines.append(f"- {r['model']}: revision `{r['revision']}`, model.bin sha256 `{r['sha256']}`")
+        weights = (("encoder-model.int8.onnx" if PARAKEET[r["model"]][2] else "encoder-model.onnx.data")
+                   if r["model"] in PARAKEET else "model.bin")
+        lines.append(f"- {r['model']}: revision `{r['revision']}`, {weights} sha256 `{r['sha256']}`")
     return "\n".join(lines) + "\n"
 
 
@@ -179,15 +286,18 @@ def main():
     parser = argparse.ArgumentParser(description="Choose the Whisper model for meetings on this laptop.")
     parser.add_argument("folder", nargs="?", help="recordings, each with an optional hand-corrected .txt of the same name")
     parser.add_argument("--models", default=",".join(MODELS), help=f"default: {','.join(MODELS)}")
-    parser.add_argument("--modes", default="auto,multilingual", help="auto, multilingual and/or pt (default: auto,multilingual)")
+    parser.add_argument("--modes", default="auto,utterance",
+                        help="auto, utterance, multilingual and/or pt (default: auto,utterance)")
     parser.add_argument("--threads", type=int, default=os.cpu_count(), help="CPU threads (default: all)")
+    parser.add_argument("--detector", default=DETECTOR,
+                        help="model that detects each utterance's language: tiny (default, fast) or same (the tested model)")
     parser.add_argument("--worker", nargs=2, help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     ensure_environment()
     files = sorted(str(p) for p in Path(args.folder).expanduser().iterdir() if p.suffix.lower() in AUDIO) if args.folder else []
     if args.worker:
-        return worker(*args.worker, files, args.threads)
+        return worker(*args.worker, files, args.threads, args.detector)
     if not files:
         sys.exit("Give a folder of recordings: python3 bench/whisper_benchmark.py ~/Recordings/benchmark")
     modes = [m for m in args.modes.split(",") if m in MODES]
@@ -201,9 +311,10 @@ def main():
         print("The laptop is on battery: plug it in for results that match how transcription will run.")
     results = []
     for model in args.models.split(","):
-        for mode in modes:
+        for mode in (["auto"] if model in PARAKEET else modes):
             print(f"- {model}, {mode}...", end=" ", flush=True)
             run = subprocess.run([sys.executable, __file__, args.folder, "--threads", str(args.threads),
+                                  *(["--detector", args.detector] if args.detector else []),
                                   "--worker", model, mode], capture_output=True, text=True)
             if run.returncode:
                 print("failed:", (run.stderr.strip().splitlines() or ["?"])[-1])

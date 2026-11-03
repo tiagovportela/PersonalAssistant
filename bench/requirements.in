@@ -1,3 +1,5 @@
 faster-whisper==1.2.1
 # PyAV 19 removed av.open(metadata_errors=...), which faster-whisper 1.2.1 still passes.
 av<19
+# NVIDIA Parakeet TDT on ONNX Runtime, compared with Whisper (docs/whisper_benchmark.md).
+onnx-asr==0.12.0
