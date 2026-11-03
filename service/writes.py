@@ -14,14 +14,12 @@ import re
 import secrets
 import unicodedata
 
+import contradictions
 import store
 from collect_git import github_repo
 from reads import LABELS, OPEN, find_project
 
 DATE_OR_TIME = re.compile(r"\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}Z)?")
-STOPWORDS = {"that", "this", "with", "from", "have", "will", "were", "been", "they", "them", "then", "than", "when",
-             "what", "which", "about", "into", "over", "para", "como", "mais", "pelo", "pela", "isto", "esta", "este",
-             "foram", "sobre", "porque", "quando", "entre", "depois", "antes", "should", "would", "could"}
 CONTENT_FIELDS = ("text", "project", "about_day", "due_at", "owner", "confidence")
 
 
@@ -35,10 +33,6 @@ def fold(text):
 
 def normalised(text):
     return " ".join(re.findall(r"\w+", fold(text)))
-
-
-def key_terms(text):
-    return {w for w in re.findall(r"\w+", fold(text)) if len(w) >= 4 and w not in STOPWORDS}
 
 
 def audit(db, action, item_type, item_id, actor="claude"):
@@ -168,15 +162,16 @@ def propose_claim(db, args):
         attach(db, claim_id, version, evidence_ids)
         audit(db, "propose", "claim", claim_id)
         result = result_for(db, claim_id, created=True, project=project)
-        terms = key_terms(text)
-        similar = [{"claim_id": c["id"], "text": c["text"], "label": LABELS[c["status"]]} for c in db.execute(
-            f"SELECT * FROM claims_for_claude WHERE project_id IS ? AND id <> ? AND status IN {OPEN}"
-            " AND type IN ('decision', 'fact', 'commitment', 'blocker') ORDER BY version_at DESC", (project, claim_id))
-            if len(terms & key_terms(c["text"])) >= max(2, len(terms) // 2)][:5]
+        conflicts, similar = contradictions.for_claim(db, claim_id)
+        if conflicts:
+            result["possible_contradictions"] = [{"claim": next(c for c in p["claims"] if c["claim_id"] != claim_id),
+                                                  "why": p["why"]} for p in conflicts]
+            result["hint"] = ("These claims are about the same thing and may disagree with the new one. Tell me, and "
+                              "ask which holds: if they conflict, link them with link_items (rel: contradicts); if "
+                              "the new one replaces an old one, link it (rel: supersedes) and ask me to mark the old "
+                              "one superseded; if they don't conflict, link them (rel: related). Nothing is overwritten.")
         if similar:
-            result["possible_contradictions"] = similar
-            result["hint"] = ("These claims share key terms with the new one. If one says something different, "
-                              "link them with link_items (rel: contradicts) and tell me; nothing is overwritten.")
+            result["similar_claims"] = similar
         return result
 
     return transaction(db, work)
@@ -300,7 +295,7 @@ def set_claim_status(db, args):
             return result_for(db, claim["id"], changed=False)
         version = add_version(db, claim["id"], claim, {}, args["status"], "me",
                               args.get("reason") or {"supported": "confirmed", "disputed": "questioned",
-                                                     "retracted": "retracted"}[args["status"]])
+                                                     "retracted": "retracted", "superseded": "replaced"}[args["status"]])
         carry_evidence(db, claim["id"], claim["version"], version)
         audit(db, "set_status", "claim", claim["id"], actor="me")
         return result_for(db, claim["id"], changed=True)

@@ -3,6 +3,7 @@ frontend exists. install.py puts a `pwi` launcher in ~/.local/bin.
 
     pwi add-repo PATH...   allowlist Git repositories (each becomes a project); a folder
                            allowlists every repository in it, and running it again adds new ones
+    pwi add-firefox [PROFILE]  read Firefox history (the default profile, or the folder given)
     pwi sources            list sources, what they hold and their last collection
     pwi disable ID         stop collecting a source and hide it from Claude; its data stays
     pwi enable ID          turn it back on
@@ -11,6 +12,10 @@ frontend exists. install.py puts a `pwi` launcher in ~/.local/bin.
     pwi open [SECTION]     open the frontend in the browser, e.g. pwi open claims
     pwi eval label [DAY]   write down what really happened on a workday (default: today)
     pwi eval report        compare your labelled days with what the layer found
+    pwi app-usage on       record which apps and windows I use, and active vs idle time
+                           (--mode titles, apps or time); installs the reviewed GNOME extension
+    pwi app-usage off      stop, and remove the extension
+    pwi app-usage status   what's being recorded, and how the extension is doing
     pwi google connect F   sign the layer in to Google, read-only, with the OAuth client file F
     pwi google status      who the layer is signed in as
     pwi google disconnect  revoke the layer's Google sign-in and forget it
@@ -33,8 +38,10 @@ from datetime import date  # noqa: E402
 import webbrowser  # noqa: E402
 from contextlib import closing  # noqa: E402
 
+import app_usage  # noqa: E402
 import collect  # noqa: E402
 import evaluation  # noqa: E402
+import gnome_extension  # noqa: E402
 import google_signin as google  # noqa: E402
 import paths  # noqa: E402
 import retention  # noqa: E402
@@ -105,6 +112,45 @@ def report_days(start, end):
     return 0
 
 
+MODE_TEXT = {"titles": "app names and window titles", "apps": "app names only", "time": "active and idle time only"}
+
+
+def app_usage_command(db, args):
+    if args.step == "off":
+        app_usage.turn_off(db)
+        gnome_extension.uninstall()
+        print("App usage is off, and the extension is removed. What was recorded stays until retention or you delete it.")
+        return 0
+    if args.step == "on":
+        app_usage.turn_on(db, args.mode)
+        mode = app_usage.mode(db)
+        print(f"App usage is on: {MODE_TEXT[mode]}. The service starts sampling within a minute.")
+        if mode != "time":
+            try:
+                result = gnome_extension.install()
+                print(f"Installed the reviewed Focused Window D-Bus extension (commit {gnome_extension.COMMIT[:7]}).")
+                for step in result["todo"]:
+                    print(f"  To do: {step}")
+            except gnome_extension.ExtensionError as e:
+                print(f"  {e}")
+                print("  Until then, only active and idle time is recorded.")
+        return 0
+    s = app_usage.status(db)
+    if not s.get("source_id"):
+        print("App usage is off. Turn it on with: pwi app-usage on")
+        return 0
+    print(f"App usage is {'on' if s['on'] else 'off'}: {MODE_TEXT[s['mode']]}.")
+    if s.get("last_sample_at"):
+        print(f"  Recording: {MODE_TEXT[s['mode_in_use']]}; last write {s['last_sample_at']}, "
+              f"{s['average_sample_ms']} ms per sample on average.")
+    if s.get("fallback"):
+        print(f"  Fallback: {s['fallback']}")
+    ext = gnome_extension.status()
+    print(f"  GNOME Shell {ext['gnome_shell'] or 'not found'}; extension "
+          + ("running" if ext["running"] else "installed, waiting for a new login" if ext["installed"] else "not installed"))
+    return 0
+
+
 def google_command(args):
     os.umask(0o077)
     try:
@@ -135,6 +181,8 @@ def main():
     add = commands.add_parser("add-repo", help="allowlist Git repositories, or every repository in a folder")
     add.add_argument("paths", nargs="+", metavar="PATH",
                      help="a repository, or a folder such as ~/Projects; run it again to add new repositories")
+    commands.add_parser("add-firefox", help="read Firefox history, with secret-looking URL parts removed").add_argument(
+        "profile", nargs="?", help="the profile folder; default: the profile Firefox opens")
     commands.add_parser("sources", help="list sources and their last collection")
     for name, text in (("disable", "stop collecting a source and hide it from Claude"), ("enable", "turn a source back on")):
         commands.add_parser(name, help=text).add_argument("source_id", type=int, metavar="ID")
@@ -148,6 +196,13 @@ def main():
     reporting = evaluate.add_parser("report", help="compare your labelled days with what the layer found")
     reporting.add_argument("--from", dest="start", metavar="DAY", help="first day, YYYY-MM-DD")
     reporting.add_argument("--to", dest="end", metavar="DAY", help="last day, YYYY-MM-DD")
+    usage = commands.add_parser("app-usage", help="which apps and windows I use, and active vs idle time")
+    usage_steps = usage.add_subparsers(dest="step", required=True)
+    usage_steps.add_parser("on", help="start recording").add_argument(
+        "--mode", choices=app_usage.MODES, help="titles (default): app names and window titles; apps: app names "
+        "only; time: active and idle time only")
+    usage_steps.add_parser("off", help="stop recording, and remove the extension")
+    usage_steps.add_parser("status", help="what's being recorded")
     signin = commands.add_parser("google", help="the layer's own read-only Google sign-in").add_subparsers(
         dest="step", required=True)
     signin.add_parser("connect", help="sign in, read-only").add_argument(
@@ -172,6 +227,16 @@ def main():
                 new = sum(a["status"] in ("allowlisted", "allowlisted again") for a in added)
                 print(f"{len(added)} repositor{'y' if len(added) == 1 else 'ies'}, {new} newly allowlisted. Collecting...")
                 print_runs(collect.run(paths.STORE_PATH, "manual"))
+            elif args.command == "add-firefox":
+                a = sources.add_firefox(db, args.profile)
+                print(f"Firefox history {a['status']}: profile {a['name']} ({a['profile']}).")
+                if a["other_profiles_on"]:
+                    print(f"Other Firefox profiles are also on (sources {', '.join(map(str, a['other_profiles_on']))});"
+                          " turn off any you don't use with: pwi disable ID")
+                print("Collecting...")
+                print_runs(collect.run(paths.STORE_PATH, "manual"))
+            elif args.command == "app-usage":
+                return app_usage_command(db, args)
             elif args.command == "sources":
                 for s in sources.list_sources(db):
                     state = "on " if s["enabled"] else "off"

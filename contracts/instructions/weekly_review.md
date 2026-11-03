@@ -15,18 +15,18 @@ Use the week I named. Weeks run Monday to Sunday. If I named no week, use the la
    - Google Calendar: key meetings, such as reviews, demos and decisions.
    - Gmail, and Google Chat with `chat_messages`: decisions and commitments made in threads that week, and requests to me still open.
    - Drive and Notion: documents written or substantially changed.
-3. Use `aging` from `get_week` for overdue commitments, open blockers and long-unconfirmed claims.
+3. Use `aging` from `get_week` for overdue commitments, open blockers and long-unconfirmed claims, and `possible_contradictions` for claims that may disagree. Each project's `focus_minutes` and `pages_visited`, and `computer_time_by_day`, show where the time went.
 4. Save any new commitment, blocker or decision you found online with `propose_claim`, with evidence, and any project alias you found with `add_project_alias`.
 
 ## Output
 
 **Milestones**: what was completed or released.
 
-**Progress by project**: a few lines each, with evidence.
+**Progress by project**: a few lines each, with evidence, and the focus time when app usage has it.
 
 **Aging work**: unfinished items, open PRs, and commitments past or near their deadline, each with its age.
 
-**Unresolved risks and blockers**
+**Unresolved risks and blockers**: including possible contradictions between claims, for the end-of-day review to settle.
 
 **Waiting for confirmation**: the number of unconfirmed claims from that week.
 

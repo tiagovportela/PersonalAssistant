@@ -53,7 +53,13 @@ The schema can't enforce these on its own:
 | `git.snapshot` | `git:snapshot:<repo id>:<observed_at>` | Branch, head, ahead/behind and uncommitted-change counts. Written only when they differ from the last snapshot. |
 | `claude_code.session` | `claude_code:session:<session uuid>` | `payload_ref` is the session file. Gets `gone_at` when Claude Code deletes the file. |
 
-Later phases add `firefox.visit`, `app.focus` (one event per continuous focus span, not per 10-second sample), `meeting.recording` and `notes.file`.
+| `firefox.visit` | `firefox:visit:<place guid>:<visit time µs>` | Phase 4. `payload`: `url` (cleaned), `site`, `how` (link, typed, bookmark, redirect). Stable across Firefox rebuilding its database. Gets `gone_at` when I delete the visit in Firefox. |
+| `app.focus` | `app:focus:<start unix time>` | Phase 4. One continuous span on one window, not one per 10-second sample; `title` is the window title (redacted) in mode titles; `payload`: `app`, `seconds`. The open span is written as it stands and grows under the same id. |
+| `app.active` / `app.idle` | `app:active:<start>` / `app:idle:<start>` | Phase 4. Active time with no window details (mode time, or no extension), and idle time, which starts at the last input. |
+
+Phase 3 will add `meeting.recording` and `notes.file`.
+
+Schema 5 (Phase 4) adds `settings` (`app_usage.mode`), and indexes a visit's address and a span's app for search.
 
 ## Decided (2 Nov 2026)
 

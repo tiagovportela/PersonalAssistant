@@ -164,6 +164,7 @@ CREATE TRIGGER events_fts_update AFTER UPDATE OF title ON events BEGIN
     INSERT INTO events_fts (rowid, title) VALUES (NEW.seq, NEW.title);
 END;
 DROP TABLE connectors;
+DROP TABLE settings;
 UPDATE schema_version SET version = 1;
 """
 

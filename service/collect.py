@@ -14,6 +14,7 @@ import time
 from contextlib import closing
 
 import collect_claude_code
+import collect_firefox
 import collect_git
 import store
 from batch import CollectorError
@@ -22,7 +23,8 @@ DEFAULT_RETENTION_DAYS = 90
 log = logging.getLogger("pwi")
 _one_at_a_time = threading.Lock()
 
-COLLECTORS = {"git_repo": collect_git.collect, "claude_code": collect_claude_code.collect}
+COLLECTORS = {"git_repo": collect_git.collect, "claude_code": collect_claude_code.collect,
+              "firefox": collect_firefox.collect}
 
 
 def run(store_path, trigger="manual"):
@@ -32,12 +34,14 @@ def run(store_path, trigger="manual"):
         return [run_source(db, s, trigger) for s in sources if s["kind"] in COLLECTORS]
 
 
-def run_source(db, source, trigger):
+def run_source(db, source, trigger, collector=None):
+    """One pass over one source. `collector` defaults to the source kind's; app usage passes its own,
+    which hands over the spans it sampled."""
     run_id = db.execute("INSERT INTO collector_runs (source_id, trigger, started_at, status) VALUES (?, ?, ?, 'running')",
                         (source["id"], trigger, store.now())).lastrowid
     counts, error = {}, None
     try:
-        batch = COLLECTORS[source["kind"]](db, source, since(db, source["kind"]))
+        batch = (collector or COLLECTORS[source["kind"]])(db, source, since(db, source["kind"]))
         db.execute("BEGIN IMMEDIATE")
         try:
             counts = apply(db, source, batch)

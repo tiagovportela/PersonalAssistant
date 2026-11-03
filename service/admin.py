@@ -10,7 +10,10 @@ import os
 import platform
 import sqlite3
 
+import app_usage
 import collect
+import collect_firefox
+import gnome_extension
 import google_signin as google
 import paths
 import retention
@@ -97,11 +100,50 @@ def set_source_enabled(db, source_id, enabled):
     return {"source_id": source_id, "enabled": bool(enabled)}
 
 
+def activity_sources(db):
+    """Firefox history and app usage: what's on, and what the laptop has (a Firefox profile, the extension)."""
+    detected = collect_firefox.default_profile()
+    usage = app_usage.status(db)
+    return {
+        "firefox": {"sources": [dict(r) for r in db.execute("SELECT id, locator, enabled FROM sources WHERE kind = 'firefox'"
+                                                            " ORDER BY id")],
+                    "detected_profile": str(detected[0]) if detected else None},
+        "app_usage": {**usage, "modes": list(app_usage.MODES), "gnome": gnome_extension.status()},
+    }
+
+
+def add_firefox(db):
+    try:
+        added = sources.add_firefox(db)
+    except CollectorError as e:
+        raise Invalid(str(e)) from None
+    return {**activity_sources(db), "added": added}
+
+
+def set_app_usage(db, enabled, mode=None):
+    """Turns app usage on (installing the reviewed extension unless the mode is time) or off (removing it)."""
+    if mode is not None and mode not in app_usage.MODES:
+        raise Invalid(f"The mode is one of: {', '.join(app_usage.MODES)}.")
+    todo, problem = [], None
+    if enabled:
+        app_usage.turn_on(db, mode)
+        if app_usage.mode(db) != "time":
+            try:
+                todo = gnome_extension.install()["todo"]
+            except gnome_extension.ExtensionError as e:
+                problem = f"{e} Until then, only active and idle time is recorded."
+    else:
+        app_usage.turn_off(db)
+        gnome_extension.uninstall()
+    return {**activity_sources(db), "todo": todo, "problem": problem}
+
+
 def projects(db):
     labelled = label_set(db)
     rows = db.execute(
         "SELECT p.*, (SELECT COUNT(*) FROM events e WHERE e.project_id = p.id) AS events,"
-        " (SELECT MAX(local_day) FROM events e WHERE e.project_id = p.id AND e.type <> 'git.snapshot') AS last_activity_day,"
+        " (SELECT MAX(local_day) FROM events e WHERE e.project_id = p.id AND e.type NOT IN ('git.snapshot', 'firefox.visit')"
+        " AND e.type NOT LIKE 'app.%') AS last_activity_day,"
         " (SELECT COUNT(*) FROM current_claims c WHERE c.project_id = p.id AND c.status <> 'retracted') AS claims"
         " FROM projects p ORDER BY last_activity_day IS NULL, last_activity_day DESC, p.id").fetchall()
     aliases = db.execute("SELECT project_id, kind, value, method FROM project_aliases ORDER BY kind, value").fetchall()
@@ -188,11 +230,18 @@ def set_connector(db, provider, changes):
 
 # Browsing --------------------------------------------------------------------
 
-def events(db, project=None, day=None, query=None, source=None, limit=200):
+EVENT_KINDS = {"work": "e.type NOT IN ('git.snapshot', 'firefox.visit') AND e.type NOT LIKE 'app.%'",
+               "firefox": "e.type = 'firefox.visit'", "app_usage": "e.type LIKE 'app.%'",
+               "all": "e.type <> 'git.snapshot'"}
+
+
+def events(db, project=None, day=None, query=None, source=None, limit=200, kind="work"):
     labelled = label_set(db)
     confidential = {r[0] for r in db.execute("SELECT id FROM confidential_events")}
     sql, params = "SELECT e.*, s.name AS source_name, s.enabled FROM events e JOIN sources s ON s.id = e.source_id", []
-    where = ["e.type <> 'git.snapshot'"]
+    if kind not in EVENT_KINDS:
+        raise Invalid(f"The kind is one of: {', '.join(EVENT_KINDS)}.")
+    where = [EVENT_KINDS[kind]]
     if query:
         match = fts_query(query)
         if not match:

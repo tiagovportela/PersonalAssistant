@@ -13,6 +13,7 @@ import threading
 import time
 from contextlib import closing
 
+import app_usage
 import collect
 import store
 from chat import CHAT_READS
@@ -62,6 +63,13 @@ def source_label(s):
     return f"git:{s['name']}" if s["kind"] == "git_repo" else s["kind"]
 
 
+def stale_before(s, now):
+    """App usage writes every few minutes by itself; the others are collected on demand."""
+    if s["kind"] == "app_usage":
+        return store.utc(now - 2 * app_usage.FLUSH_EVERY - 60)
+    return store.utc(now - STALE_AFTER)
+
+
 ENABLED_SOURCES = """
 SELECT s.id, s.kind, s.name,
        (SELECT MAX(finished_at) FROM collector_runs r WHERE r.source_id = s.id) AS last_run,
@@ -75,10 +83,10 @@ ORDER BY s.id
 
 def coverage(db, refreshed_now):
     sources = db.execute(ENABLED_SOURCES).fetchall()
-    fresh_since = store.utc(time.time() - STALE_AFTER)
+    now = time.time()
     result = {
         "sources_checked": [source_label(s) for s in sources],
-        "stale_sources": [source_label(s) for s in sources if not s["last_ok"] or s["last_ok"] < fresh_since],
+        "stale_sources": [source_label(s) for s in sources if not s["last_ok"] or s["last_ok"] < stale_before(s, now)],
         "last_refresh_at": max((s["last_ok"] for s in sources if s["last_ok"]), default=None),
         "refreshed_now": refreshed_now,
     }
@@ -187,7 +195,8 @@ class Layer:
         trigger a refresh on every read: what counts is the last attempt, not the last success."""
         with closing(store.connect(self.store_path)) as db:
             tried_since = store.utc(time.time() - STALE_AFTER)
-            stale = [s for s in db.execute(ENABLED_SOURCES) if not s["last_run"] or s["last_run"] < tried_since]
+            stale = [s for s in db.execute(ENABLED_SOURCES) if s["kind"] in collect.COLLECTORS
+                     and (not s["last_run"] or s["last_run"] < tried_since)]
         if not stale:
             return False
         with self._refresh_lock:

@@ -23,6 +23,7 @@ import signal  # noqa: E402
 import time  # noqa: E402
 from contextlib import closing  # noqa: E402
 
+import app_usage  # noqa: E402
 import collect  # noqa: E402
 import idle  # noqa: E402
 import paths  # noqa: E402
@@ -146,12 +147,15 @@ async def main():
     collecting = asyncio.create_task(scheduler())
     frontend = Frontend(paths.STORE_PATH, VERSION + (f"+{commit}" if commit else ""), FRONTEND_PORT)
     frontend.start()
+    sampler = app_usage.Sampler(paths.STORE_PATH)
+    sampler.start()
     try:
         await stop.wait()
     finally:
         log.info("stopping")
         collecting.cancel()
         frontend.stop()
+        await asyncio.to_thread(sampler.stop)  # writes the span still open
         server.close()
         for writer in list(clients):  # the bridges reconnect on their own once we're back
             writer.close()

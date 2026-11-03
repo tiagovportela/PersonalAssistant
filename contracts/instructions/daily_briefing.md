@@ -25,6 +25,8 @@ Use the day I named. "Yesterday" means the previous workday: on a Monday, that's
 
 **What I did**: completed work, investigations, decisions, documents written and failed attempts, grouped by project. Each item cites its evidence and is labelled.
 
+**Time and reading**: from `computer_time` and `browsing`, if present: active hours and the projects that took most of them, in one line, and up to 5 pages I read that matter for the work.
+
 **What comes next**: meetings with times, deadlines, commitments, and anything to prepare.
 
 **Needs attention**: blockers, aging PRs, failed CI, and requests to me in mail and chat that are still unanswered.

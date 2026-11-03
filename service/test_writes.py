@@ -154,8 +154,10 @@ def main():
     similar = call("propose_claim", {"type": "decision", "text": "We use Redis for the cache instead of SQLite.",
                                      "evidence": [{"event_id": tune_commit}]})
     claim_b = similar["claim_id"]
-    check("a claim sharing key terms with another comes back with possible contradictions to check",
-          [c["claim_id"] for c in similar["possible_contradictions"]] == [claim_a] and "link_items" in similar["hint"])
+    check("a claim that may contradict another comes back with it, the reason, and what to do",
+          [c["claim"]["claim_id"] for c in similar["possible_contradictions"]] == [claim_a]
+          and similar["possible_contradictions"][0]["why"] == ["one says something replaces something else"]
+          and "link_items" in similar["hint"])
     before = claims_count()
     for args, reason in (
             ({"evidence": [{"event_id": "git:commit:deadbeef"}]}, "isn't an event the layer has"),

@@ -212,6 +212,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); }
 .dialog h2 { margin-top: 0; font-size: var(--step-2); }
 .decisions { list-style: none; margin: 1rem 0; padding: 0; border-top: 1px solid var(--rule); }
 .decisions li { padding: 0.85rem 0; border-bottom: 1px solid var(--rule); }
+.modes { border: 0; margin: 0 0 0.5rem; padding: 0; display: grid; gap: 0.3rem; }
+.modes .small { display: block; }
 .decisions fieldset { border: 0; margin: 0.5rem 0 0; padding: 0; display: grid; gap: 0.3rem; }
 .decisions .quiet { font-size: var(--step--1); }
 .claim-text { margin: 0 0 0.15rem; }

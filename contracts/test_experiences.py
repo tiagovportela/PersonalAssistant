@@ -19,6 +19,8 @@ KNOWN_FIELDS = {
     "due", "lookups", "aging", "cursor", "days_missing_session_notes", "project", "since", "until",
     "contradicts", "supported", "retracted", "disputed",
     "connectors", "allowed", "scope", "refs", "references", "owner", "me", "due_at", "message", "document", "from_me",
+    "browsing", "computer_time", "computer_time_by_day", "focus_minutes", "pages_visited", "recent_pages",
+    "possible_contradictions", "why", "supersedes", "superseded", "related", "kinds", "firefox", "app_usage",
 }
 # Section headings from the brief's appendix, in order.
 SECTIONS = {

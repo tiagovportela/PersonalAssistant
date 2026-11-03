@@ -8,7 +8,7 @@ from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schema" / "schema.sql"
 MIGRATIONS_DIR = SCHEMA_PATH.with_name("migrations")  # NNN_name.sql takes the store from version NNN-1 to NNN
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # The one way events are written: re-reading a record never duplicates it, and only
 # a real content change (a correction, a session that grew) touches the row.

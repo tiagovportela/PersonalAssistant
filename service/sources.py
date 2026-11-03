@@ -1,13 +1,15 @@
 """The allowlist: which repositories the layer reads. Nothing is collected
 until I add it here (default deny). Adding a repository also creates its
 project and turns on the Claude Code index, which only covers sessions inside
-allowlisted repositories."""
+allowlisted repositories. Firefox history is added the same way, once, and is
+then read in full (the brief's one exception)."""
 
 import os
 import re
 import subprocess
 from pathlib import Path
 
+import collect_firefox
 import collect_git
 import paths
 import store
@@ -130,6 +132,42 @@ def add_repo(db, path, reenable=True):
         db.execute("ROLLBACK")
         raise
     return {"source_id": source_id, "project": project, "path": top, "status": status}
+
+
+def add_firefox(db, profile=None):
+    """Turns on Firefox history: the default profile, or the one given. Returns what happened."""
+    if profile is None:
+        found = collect_firefox.default_profile()
+        if found is None:
+            raise CollectorError("No Firefox profile with history was found. Open Firefox once, or give the "
+                                 "profile folder: pwi add-firefox PATH (see about:profiles in Firefox).")
+        profile, name = found
+    else:
+        profile, name = Path(profile).expanduser(), Path(profile).name
+        if not (profile / "places.sqlite").is_file():
+            raise CollectorError(f"{profile} isn't a Firefox profile with history (there's no places.sqlite).")
+    profile = os.path.realpath(profile)
+    now = store.now()
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        row = db.execute("SELECT id, enabled FROM sources WHERE kind = 'firefox' AND locator = ?", (profile,)).fetchone()
+        if row:
+            status = "already on" if row["enabled"] else "turned on again"
+            db.execute("UPDATE sources SET enabled = 1 WHERE id = ?", (row["id"],))
+            source_id = row["id"]
+        else:
+            status = "turned on"
+            source_id = db.execute("INSERT INTO sources (kind, locator, name, added_at) VALUES ('firefox', ?, 'Firefox', ?)",
+                                   (profile, now)).lastrowid
+        others = [r["id"] for r in db.execute("SELECT id FROM sources WHERE kind = 'firefox' AND enabled = 1 AND id <> ?",
+                                              (source_id,))]
+        db.execute("INSERT INTO audit_log (at, actor, action, item_type, item_id) VALUES (?, 'me', 'settings', 'source', ?)",
+                   (now, str(source_id)))
+        db.execute("COMMIT")
+    except BaseException:
+        db.execute("ROLLBACK")
+        raise
+    return {"source_id": source_id, "profile": profile, "name": name, "status": status, "other_profiles_on": others}
 
 
 def set_enabled(db, source_id, enabled):

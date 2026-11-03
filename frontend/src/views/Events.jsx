@@ -6,17 +6,27 @@ import { Loading, Page, Problem, Redacted, label, useAction, useLoad } from "../
 export function Events() {
   const projects = useLoad("projects");
   const [project, setProject] = useState("");
+  const [kind, setKind] = useState("work");
   const [day, setDay] = useState("");
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
   const [deleting, setDeleting] = useState(null);
-  const params = new URLSearchParams({ ...(project && { project }), ...(day && { day }), ...(search && { q: search }) });
+  const params = new URLSearchParams({ kind, ...(project && { project }), ...(day && { day }), ...(search && { q: search }) });
   const list = useLoad(`events?${params}`);
   const labelling = useAction(() => list.reload());
 
   return (
-    <Page title="Activity" intro="Commits, pushes and Claude Code sessions, newest first. Only metadata is kept: never code or prompts.">
+    <Page title="Activity" intro="What was collected, newest first. Only metadata is kept: never code, prompts or page contents.">
       <form className="filters" onSubmit={(e) => { e.preventDefault(); setSearch(query); }}>
+        <label>
+          Kind
+          <select value={kind} onChange={(e) => setKind(e.target.value)}>
+            <option value="work">Commits and sessions</option>
+            <option value="firefox">Firefox pages</option>
+            <option value="app_usage">App usage</option>
+            <option value="all">Everything</option>
+          </select>
+        </label>
         <label>
           Project
           <select value={project} onChange={(e) => setProject(e.target.value)}>
@@ -30,7 +40,7 @@ export function Events() {
         </label>
         <label className="grow">
           Words
-          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="a commit message, a file name" />
+          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="a commit message, a file name, a page" />
         </label>
         <button type="submit" className="button">Search</button>
       </form>
@@ -52,6 +62,8 @@ export function Events() {
                     {e.files_changed !== undefined && `${e.files_changed} files, +${e.insertions} −${e.deletions}`}
                     {e.prompts !== undefined && `${e.prompts} prompts, until ${when(e.until).slice(11)}`}
                     {e.commits !== undefined && e.commits !== null && `${e.commits} commits`}
+                    {e.url && <a href={e.url} target="_blank" rel="noreferrer noopener">{e.site}</a>}
+                    {e.minutes !== undefined && `${e.app ? `${e.app}, ` : ""}${e.minutes} min, until ${when(e.until).slice(11)}`}
                     {e.gone && ", no longer in the source"}
                     {!e.source_enabled && ", from a source that's off"}
                   </div>

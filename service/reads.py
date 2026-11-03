@@ -9,9 +9,12 @@ arguments, and returns a dict; handlers.py adds the coverage block.
 import json
 import re
 import unicodedata
+from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+import app_usage
+import contradictions
 from collect_claude_code import is_prompt
 from redact import redact
 
@@ -20,6 +23,9 @@ OPEN = "('proposed', 'supported', 'disputed')"  # statuses Claude may use; retra
 LABELS = {"supported": "verified", "proposed": "unconfirmed", "disputed": "disputed"}
 GROUPS = {"git.commit": "commits", "git.merge": "merges", "git.push": "pushes", "claude_code.session": "sessions"}
 EVENT_KINDS = {"git": "e.type LIKE 'git.%'", "claude_code": "e.type LIKE 'claude_code.%'"}
+# Firefox visits and app spans are many and small: tools summarise them instead of listing them with the work.
+WORK = "type NOT IN ('git.snapshot', 'firefox.visit', 'app.focus', 'app.active', 'app.idle')"
+DEFAULT_SEARCH_KINDS = ["git", "claude_code", "claims", "artifacts", "firefox"]
 NOT_CONFIDENTIAL_PROJECT = ("NOT EXISTS (SELECT 1 FROM labels l WHERE l.item_type = 'project'"
                             " AND l.item_id = {column})")
 
@@ -52,9 +58,87 @@ def brief_event(e):
     elif e["type"] == "git.snapshot":
         item.update({k: p.get(k) for k in ("branch", "head", "upstream", "ahead", "behind",
                                            "staged", "unstaged", "untracked", "conflicted")})
+    elif e["type"] == "firefox.visit":
+        item.update({k: p.get(k) for k in ("url", "site")})
+    elif e["type"].startswith("app."):
+        item.update({"app": p.get("app"), "minutes": minutes(p.get("seconds"))})
     if e["gone_at"]:
         item["gone"] = True  # rebased away, or the session file was deleted
     return {k: v for k, v in item.items() if v is not None}
+
+
+def minutes(seconds):
+    return round((seconds or 0) / 60, 1)
+
+
+def span_seconds(e):
+    return json.loads(e["payload"]).get("seconds") or 0
+
+
+def computer_time(db, first, last):
+    """Active and idle time from app usage, with where the active time went. None without app usage."""
+    rows = db.execute("SELECT * FROM events_for_claude WHERE local_day BETWEEN ? AND ? AND type LIKE 'app.%'"
+                      " ORDER BY occurred_at", (first, last)).fetchall()
+    if not rows:
+        return None
+    active = [r for r in rows if r["type"] != "app.idle"]
+    by_app, by_project, windows = Counter(), Counter(), Counter()
+    for r in active:
+        seconds, app = span_seconds(r), json.loads(r["payload"]).get("app")
+        if r["type"] == "app.focus":
+            by_app[app or "(no window)"] += seconds
+        if r["project_id"]:
+            by_project[r["project_id"]] += seconds
+        if r["title"]:
+            windows[(r["title"], app, r["project_id"])] += seconds
+    result = {
+        "active_minutes": minutes(sum(span_seconds(r) for r in active)),
+        "idle_minutes": minutes(sum(span_seconds(r) for r in rows if r["type"] == "app.idle")),
+        "first_active": local_time(active[0]["occurred_at"], active[0]["utc_offset_min"]) if active else None,
+        "last_active": local_time(max(r["ended_at"] for r in active), active[-1]["utc_offset_min"]) if active else None,
+        "by_app": [{"app": a, "minutes": minutes(t)} for a, t in by_app.most_common(10)],
+        "by_project": {p: minutes(t) for p, t in by_project.most_common()},
+        "top_windows": [{"title": t, "app": a, "project": p, "minutes": minutes(sec)}
+                        for (t, a, p), sec in windows.most_common(10)],
+    }
+    if not by_app and active:
+        result["note"] = "Only active and idle time was recorded (app usage mode 'time', or the GNOME extension isn't running)."
+    return {k: v for k, v in result.items() if v not in (None, [], {})}
+
+
+MAX_PAGES = 30
+
+
+def browsing(db, first, last, project=None, max_pages=MAX_PAGES):
+    """The pages I read in Firefox: each address once, with how often I opened it. Pages linked to a project
+    come first, then the most visited. None without Firefox history."""
+    sql = ("SELECT * FROM events_for_claude WHERE local_day BETWEEN ? AND ? AND type = 'firefox.visit'"
+           " AND gone_at IS NULL")
+    params = [first, last]
+    if project:
+        sql += " AND project_id = ?"
+        params.append(project)
+    rows = db.execute(sql + " ORDER BY occurred_at", params).fetchall()
+    if not rows:
+        return None
+    pages, sites = {}, Counter()
+    for r in rows:
+        payload = json.loads(r["payload"])
+        sites[payload.get("site")] += 1
+        page = pages.setdefault(payload["url"], {"event_id": r["id"], "title": r["title"], "url": payload["url"],
+                                                 "first_at": local_time(r["occurred_at"], r["utc_offset_min"]),
+                                                 "visits": 0, "project": r["project_id"]})
+        page["visits"] += 1
+        page["title"] = r["title"] or page["title"]
+    chosen = sorted(pages.values(), key=lambda p: (p["project"] is None, -p["visits"]))[:max_pages]
+    chosen.sort(key=lambda p: p["first_at"])
+    result = {"visits": len(rows), "distinct_pages": len(pages),
+              "top_sites": [{"site": site, "visits": n} for site, n in sites.most_common(10)],
+              "pages": [{k: v for k, v in p.items() if v is not None} for p in chosen]}
+    if len(pages) > max_pages:
+        result["note"] = (f"{len(pages) - max_pages} more pages not listed; search with kinds ['firefox'] to find "
+                          "a page by its title or address.")
+    return result
 
 
 def evidence_list(db, claim_id, version):
@@ -125,7 +209,7 @@ def day_gaps(db, day):
 def list_projects(db, args):
     projects = [dict(r) for r in db.execute(
         "SELECT p.id, p.name, p.status, (SELECT MAX(e.local_day) FROM events_for_claude e"
-        " WHERE e.project_id = p.id AND e.type <> 'git.snapshot') AS last_activity_day FROM projects p WHERE "
+        f" WHERE e.project_id = p.id AND e.{WORK}) AS last_activity_day FROM projects p WHERE "
         + NOT_CONFIDENTIAL_PROJECT.format(column="p.id")
         + " ORDER BY last_activity_day IS NULL, last_activity_day DESC, p.id")]
     aliases = db.execute("SELECT project_id, kind, value FROM project_aliases ORDER BY kind, value").fetchall()
@@ -167,7 +251,7 @@ def lookups_for(alias, branch):
 def get_day(db, args):
     day = args["day"]
     groups = {}
-    for e in db.execute("SELECT * FROM events_for_claude WHERE local_day = ? AND type <> 'git.snapshot'"
+    for e in db.execute(f"SELECT * FROM events_for_claude WHERE local_day = ? AND {WORK}"
                         " ORDER BY occurred_at, id", (day,)):
         group = groups.setdefault(e["project_id"] or "(no project)", {})
         group.setdefault(GROUPS.get(e["type"], "other"), []).append(brief_event(e))
@@ -186,9 +270,12 @@ def get_day(db, args):
         "unconfirmed_count": unconfirmed_count(db),
         "session_notes": claims(db, "type = 'session_note' AND about_day = ?", (day,)),
     }
-    result["found"] = bool(groups or result["claims"] or result["due"] or result["session_notes"])
+    activity = {"computer_time": computer_time(db, day, day), "browsing": browsing(db, day, day)}
+    result.update({k: v for k, v in activity.items() if v})
+    result["found"] = bool(groups or result["claims"] or result["due"] or result["session_notes"] or any(activity.values()))
     if not groups:
-        result["gaps"] = day_gaps(db, day)
+        result["gaps"] = (day_gaps(db, day) if not any(activity.values())
+                          else [f"No commits or Claude Code sessions recorded on {day}; only computer time or browsing."])
     return result
 
 
@@ -199,11 +286,14 @@ def get_week(db, args):
     span = (monday.isoformat(), sunday.isoformat())
     by_project = {}
     milestones = []
-    for e in db.execute("SELECT * FROM events_for_claude WHERE local_day BETWEEN ? AND ? AND type <> 'git.snapshot'"
+    def entry(project):
+        return by_project.setdefault(project or "(no project)",
+                                     {"commits": 0, "commits_by_others": 0, "merges": 0, "pushes": 0, "sessions": 0,
+                                      "active_days": set()})
+
+    for e in db.execute(f"SELECT * FROM events_for_claude WHERE local_day BETWEEN ? AND ? AND {WORK}"
                         " ORDER BY occurred_at", span):
-        p = by_project.setdefault(e["project_id"] or "(no project)",
-                                  {"commits": 0, "commits_by_others": 0, "merges": 0, "pushes": 0, "sessions": 0,
-                                   "active_days": set()})
+        p = entry(e["project_id"])
         if e["type"] == "git.commit":
             p["commits" if e["actor"] == "me" else "commits_by_others"] += 1
         elif e["type"] in GROUPS:
@@ -211,6 +301,14 @@ def get_week(db, args):
         p["active_days"].add(e["local_day"])
         if e["type"] == "git.merge":
             milestones.append({**brief_event(e), "project": e["project_id"]})
+    for r in db.execute("SELECT project_id, SUM(json_extract(payload, '$.seconds')) AS seconds FROM events_for_claude"
+                        " WHERE local_day BETWEEN ? AND ? AND type = 'app.focus' AND project_id IS NOT NULL"
+                        " GROUP BY project_id", span):
+        entry(r["project_id"])["focus_minutes"] = minutes(r["seconds"])
+    for r in db.execute("SELECT project_id, COUNT(*) AS visits FROM events_for_claude WHERE local_day BETWEEN ? AND ?"
+                        " AND type = 'firefox.visit' AND gone_at IS NULL AND project_id IS NOT NULL"
+                        " GROUP BY project_id", span):
+        entry(r["project_id"])["pages_visited"] = r["visits"]
     for project, p in by_project.items():
         p["active_days"] = sorted(p["active_days"])
         p["claims"] = claims(db, "project_id IS ? AND about_day BETWEEN ? AND ? AND type <> 'session_note'",
@@ -226,8 +324,22 @@ def get_week(db, args):
             ((reference - timedelta(days=7)).isoformat(),), today=reference)]
     )
     in_week = "(about_day BETWEEN ? AND ? OR substr(first_proposed_at, 1, 10) BETWEEN ? AND ?)"
+    conflicts, conflict_count = contradictions.candidates(db, limit=5)
     result = {"week": {"from": span[0], "to": span[1]}, "by_project": by_project, "milestones": milestones,
               "aging": aging, "unconfirmed_count": unconfirmed_count(db, in_week, span * 2)}
+    days = [{"day": r["local_day"], "active_minutes": minutes(r["active"]), "idle_minutes": minutes(r["idle"])}
+            for r in db.execute("SELECT local_day, SUM(CASE WHEN type = 'app.idle' THEN 0 ELSE json_extract(payload, '$.seconds')"
+                                " END) AS active, SUM(CASE WHEN type = 'app.idle' THEN json_extract(payload, '$.seconds')"
+                                " ELSE 0 END) AS idle FROM events_for_claude WHERE local_day BETWEEN ? AND ?"
+                                " AND type LIKE 'app.%' GROUP BY local_day ORDER BY local_day", span)]
+    if days:
+        result["computer_time_by_day"] = days
+    week_pages = browsing(db, *span, max_pages=0)
+    if week_pages:
+        result["browsing"] = {k: week_pages[k] for k in ("visits", "distinct_pages", "top_sites")}
+    if conflicts:
+        result["possible_contradictions"] = conflicts
+        result["possible_contradictions_count"] = conflict_count
     result["found"] = bool(by_project or aging)
     if not by_project:
         result["gaps"] = [f"No local activity recorded from {span[0]} to {span[1]}."] + day_gaps(db, span[0])[2:]
@@ -283,13 +395,25 @@ def get_project(db, args):
         "blockers": claims(db, "project_id = ? AND type = 'blocker'", (pid,)),
         "decisions": claims(db, "project_id = ? AND type = 'decision'", (pid,), order="version_at DESC LIMIT 10"),
         "commitments": claims(db, "project_id = ? AND type = 'commitment'", (pid,), order="due_at IS NULL, due_at"),
-        "last_activity_day": db.execute("SELECT MAX(local_day) FROM events_for_claude WHERE project_id = ?"
-                                        " AND type <> 'git.snapshot'", (pid,)).fetchone()[0],
+        "last_activity_day": db.execute(f"SELECT MAX(local_day) FROM events_for_claude WHERE project_id = ?"
+                                        f" AND {WORK}", (pid,)).fetchone()[0],
         "lookups": lookups,
         "references": list(refs.values())[:20],
         "links": links,
         "found": True,
     }
+    today = date.today()
+    conflicts, conflict_count = contradictions.candidates(db, project=pid, limit=5)
+    if conflicts:
+        result["possible_contradictions"] = conflicts
+        result["possible_contradictions_count"] = conflict_count
+    pages = browsing(db, (today - timedelta(days=30)).isoformat(), today.isoformat(), project=pid, max_pages=10)
+    if pages:
+        result["recent_pages"] = sorted(pages["pages"], key=lambda p: p["first_at"], reverse=True)
+    focus = db.execute("SELECT SUM(json_extract(payload, '$.seconds')) FROM events_for_claude WHERE project_id = ?"
+                       " AND type = 'app.focus' AND local_day >= ?", (pid, (today - timedelta(days=6)).isoformat())).fetchone()[0]
+    if focus:
+        result["focus_minutes_last_7_days"] = minutes(focus)
     gaps = []
     if not objective:
         gaps.append("No session note or fact is saved for this project yet; infer the objective from "
@@ -332,24 +456,46 @@ def search(db, args):
     query = fts_query(args["query"])
     if query is None:
         return {"results": [], "found": False, "gaps": ["The query has no words to search for."]}
-    kinds = args.get("kinds") or ["git", "claude_code", "claims", "artifacts"]
+    kinds = args.get("kinds") or DEFAULT_SEARCH_KINDS
     limit = args.get("limit", 20)
     project, since, until = args.get("project"), args.get("since"), args.get("until")
     found = []
 
-    event_kinds = [EVENT_KINDS[k] for k in kinds if k in EVENT_KINDS]
-    if event_kinds:
+    def events(condition, cap, key=None):
+        """Matching events; with `key`, each page or window once, with how many matches it had."""
         sql = ("SELECT e.*, snippet(events_fts, -1, '«', '»', '…', 12) AS snip, bm25(events_fts, 2.0, 1.0) AS rank"
-               " FROM events_fts JOIN events_for_claude e ON e.seq = events_fts.rowid"
-               f" WHERE events_fts MATCH ? AND e.type <> 'git.snapshot' AND ({' OR '.join(event_kinds)})")
+               f" FROM events_fts JOIN events_for_claude e ON e.seq = events_fts.rowid WHERE events_fts MATCH ? AND ({condition})")
         params = [query]
         for clause, value in (("e.project_id = ?", project), ("e.local_day >= ?", since), ("e.local_day <= ?", until)):
             if value:
                 sql += f" AND {clause}"
                 params.append(value)
-        for r in db.execute(sql + " ORDER BY rank LIMIT ?", (*params, limit)):
-            found.append((r["rank"], {"item_type": "event", "id": r["id"], "project": r["project_id"],
-                                      "local_day": r["local_day"], "snippet": r["snip"], **brief_event(r)}))
+        seen = {}
+        for r in db.execute(sql + " ORDER BY rank LIMIT ?", (*params, cap * 5 if key else cap)):
+            if key:
+                k = key(r)
+                if k in seen:
+                    seen[k]["matches"] += 1
+                    continue
+                if len(seen) == cap:
+                    continue
+            item = {"item_type": "event", "id": r["id"], "project": r["project_id"], "local_day": r["local_day"],
+                    "snippet": r["snip"], **brief_event(r)}
+            if key:
+                item["matches"] = 1
+                seen[key(r)] = item
+            found.append((r["rank"], item))
+
+    work = [EVENT_KINDS[k] for k in kinds if k in EVENT_KINDS]
+    if work:
+        events(f"e.type <> 'git.snapshot' AND ({' OR '.join(work)})", limit)
+    # Visits and windows repeat, so each page or title comes once; and unless asked for alone, they get a
+    # share of the results, so they don't push out commits and claims.
+    share = limit if set(kinds) <= {"firefox", "app_usage"} else max(5, limit // 4)
+    if "firefox" in kinds:
+        events("e.type = 'firefox.visit' AND e.gone_at IS NULL", share, key=lambda r: json.loads(r["payload"]).get("url"))
+    if "app_usage" in kinds:
+        events("e.type = 'app.focus' AND e.title IS NOT NULL", share, key=lambda r: r["title"])
 
     if "claims" in kinds:
         day = "COALESCE(c.about_day, substr(c.version_at, 1, 10))"
@@ -413,10 +559,14 @@ def list_unconfirmed(db, args):
                 "session_file_expires_on": (date.fromisoformat(r["oldest_change"][:10])
                                             + timedelta(days=SESSION_FILE_DAYS)).isoformat()}
                for r in db.execute(sql + " GROUP BY e.local_day, e.project_id ORDER BY day, project", params)]
+    conflicts, conflict_count = contradictions.candidates(db, project=args.get("project"), limit=10)
     result = {"claims": waiting, "unconfirmed_count": len(waiting), "days_missing_session_notes": missing,
-              "found": bool(waiting or missing)}
+              "possible_contradictions": conflicts, "found": bool(waiting or missing or conflicts)}
+    if conflict_count > len(conflicts):
+        result["possible_contradictions_count"] = conflict_count
     if not result["found"]:
-        result["gaps"] = ["Nothing is waiting: no unconfirmed claims, and every day with Claude Code sessions has a note."]
+        result["gaps"] = ["Nothing is waiting: no unconfirmed claims or possible contradictions, and every day with "
+                          "Claude Code sessions has a note."]
     return result
 
 
@@ -578,54 +728,129 @@ def read_claude_sessions(db, args):
     return result
 
 
+def median(values):
+    values = sorted(values)
+    if not values:
+        return None
+    middle = len(values) // 2
+    return values[middle] if len(values) % 2 else (values[middle - 1] + values[middle]) / 2
+
+
+def percentile(values, share):
+    values = sorted(values)
+    return values[min(len(values) - 1, int(len(values) * share))] if values else None
+
+
+def parse_utc(text):
+    return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+
+
+def source_metrics(db, s, since, now):
+    """Freshness, ingestion lag, duplication and project linking for one source."""
+    runs = db.execute("SELECT * FROM collector_runs WHERE source_id = ? AND started_at >= ? ORDER BY started_at",
+                      (s["id"], since)).fetchall()
+    ok = [r for r in runs if r["status"] == "ok"]
+    times = [parse_utc(r["started_at"]) for r in ok] + [now]
+    gap = max((b - a for a, b in zip(times, times[1:])), default=timedelta(0))
+    # Ingestion lag: from when it happened (or ended) to when the layer first saw it. Only my own events,
+    # since a colleague's commit fetched today happened whenever they made it.
+    lags = [(parse_utc(r["observed_at"]) - parse_utc(r["ended_at"] or r["occurred_at"])).total_seconds() / 60
+            for r in db.execute("SELECT observed_at, occurred_at, ended_at FROM events WHERE source_id = ? AND actor = 'me'"
+                                " AND observed_at >= ? AND type <> 'git.snapshot'", (s["id"], since))]
+    linked = db.execute("SELECT COUNT(*), COUNT(project_id) FROM events WHERE source_id = ? AND observed_at >= ?"
+                        " AND type NOT IN ('git.snapshot', 'app.idle', 'app.active')", (s["id"], since)).fetchone()
+    item = {
+        "source": f"git:{s['name']}" if s["kind"] == "git_repo" else s["kind"],
+        "runs": len(runs), "failed_runs": len(runs) - len(ok),
+        "last_success_at": ok[-1]["finished_at"] if ok else None,
+        "minutes_since_last_success": round((now - parse_utc(ok[-1]["finished_at"])).total_seconds() / 60) if ok else None,
+        "longest_gap_hours": round(gap.total_seconds() / 3600, 1) if ok else None,
+        "ingestion_lag_minutes": {"median": round(median(lags), 1), "p90": round(percentile(lags, 0.9), 1)} if lags else None,
+        "new_events": sum(r["inserted"] for r in ok), "corrections": sum(r["changed"] for r in ok),
+        "duplicates_avoided": sum(r["unchanged"] for r in ok), "gone": sum(r["gone"] for r in ok),
+        "linked_to_project": round(linked[1] / linked[0], 2) if linked[0] else None,
+        "last_error": runs[-1]["error"] if runs and runs[-1]["status"] == "error" else None,
+    }
+    if s["kind"] == "app_usage":
+        item["corrections_note"] = "For app usage, a correction is a span still open at one write that grew by the next."
+    return item
+
+
+def claim_metrics(db, since):
+    """What happened to the claims Claude proposed: by type, and in total."""
+    rows = db.execute("SELECT c.id, c.type FROM claims c WHERE c.type <> 'session_note' AND c.created_at >= ?",
+                      (since,)).fetchall()
+    blank = {"proposed": 0, "confirmed": 0, "corrected": 0, "disputed": 0, "retracted": 0, "superseded": 0,
+             "still_unconfirmed": 0}
+    total, by_type = dict(blank), {}
+    with_project = project_corrected = 0
+    for c in rows:
+        versions = db.execute("SELECT status, text, project_id, changed_by FROM claim_versions WHERE claim_id = ?"
+                              " ORDER BY version", (c["id"],)).fetchall()
+        status = versions[-1]["status"]
+        counts = by_type.setdefault(c["type"], dict(blank))
+        for bucket in (total, counts):
+            bucket["proposed"] += 1
+            bucket["confirmed"] += status == "supported"
+            bucket["disputed"] += status == "disputed"
+            bucket["retracted"] += status == "retracted"
+            bucket["superseded"] += status == "superseded"
+            bucket["still_unconfirmed"] += status == "proposed"
+            bucket["corrected"] += any(v["text"] != versions[0]["text"] for v in versions[1:])
+        if any(v["project_id"] for v in versions):
+            with_project += 1
+            project_corrected += any(v["project_id"] != versions[0]["project_id"] for v in versions[1:])
+    return total, by_type, with_project, project_corrected
+
+
 def get_metrics(db, args):
     since = args.get("since") or (date.today() - timedelta(days=30)).isoformat()
-    collectors = []
-    for s in db.execute("SELECT * FROM sources s WHERE enabled = 1 AND NOT EXISTS (SELECT 1 FROM labels l"
-                        " WHERE l.item_type = 'source' AND l.item_id = CAST(s.id AS TEXT)) ORDER BY id"):
-        runs = db.execute("SELECT * FROM collector_runs WHERE source_id = ? AND started_at >= ? ORDER BY started_at",
-                          (s["id"], since)).fetchall()
-        ok = [r for r in runs if r["status"] == "ok"]
-        times = [datetime.strptime(r["started_at"], "%Y-%m-%dT%H:%M:%SZ") for r in ok]
-        times.append(datetime.now(timezone.utc).replace(tzinfo=None))
-        gap = max((b - a for a, b in zip(times, times[1:])), default=timedelta(0))
-        collectors.append({
-            "source": f"git:{s['name']}" if s["kind"] == "git_repo" else s["kind"],
-            "runs": len(runs), "failed_runs": len(runs) - len(ok),
-            "last_success_at": ok[-1]["finished_at"] if ok else None,
-            "longest_gap_hours": round(gap.total_seconds() / 3600, 1) if ok else None,
-            "new_events": sum(r["inserted"] for r in ok), "corrections": sum(r["changed"] for r in ok),
-            "duplicates_avoided": sum(r["unchanged"] for r in ok), "gone": sum(r["gone"] for r in ok),
-            "last_error": runs[-1]["error"] if runs and runs[-1]["status"] == "error" else None,
-        })
-    claims_since = db.execute("SELECT c.id, c.type FROM claims c WHERE c.type <> 'session_note' AND c.created_at >= ?",
-                              (since,)).fetchall()
-    counts = {"proposed": len(claims_since), "confirmed": 0, "corrected": 0, "disputed": 0, "retracted": 0,
-              "still_unconfirmed": 0}
-    for c in claims_since:
-        versions = db.execute("SELECT status, text FROM claim_versions WHERE claim_id = ? ORDER BY version",
-                              (c["id"],)).fetchall()
-        status = versions[-1]["status"]
-        counts["confirmed"] += status == "supported"
-        counts["disputed"] += status == "disputed"
-        counts["retracted"] += status == "retracted"
-        counts["still_unconfirmed"] += status == "proposed"
-        counts["corrected"] += any(v["text"] != versions[0]["text"] for v in versions[1:])
+    now = datetime.now(timezone.utc)
+    collectors = [source_metrics(db, s, since, now) for s in db.execute(
+        "SELECT * FROM sources s WHERE enabled = 1 AND NOT EXISTS (SELECT 1 FROM labels l"
+        " WHERE l.item_type = 'source' AND l.item_id = CAST(s.id AS TEXT)) ORDER BY id")]
+    counts, by_type, with_project, project_corrected = claim_metrics(db, since)
     reviewed = counts["confirmed"] + counts["retracted"] + counts["corrected"]
+    commitments = by_type.get("commitment", {})
+    reviewed_commitments = commitments.get("confirmed", 0) + commitments.get("retracted", 0) + commitments.get("corrected", 0)
     open_claims = db.execute(f"SELECT id, version FROM claims_for_claude WHERE status IN {OPEN} AND type <> 'session_note'").fetchall()
     cited = sum(bool(db.execute("SELECT 1 FROM claim_evidence WHERE claim_id = ? AND version = ? LIMIT 1",
                                 (c["id"], c["version"])).fetchone()) for c in open_claims)
-    return {
+    today = date.today().isoformat()
+    overdue = claims(db, "type = 'commitment' AND due_at IS NOT NULL AND substr(due_at, 1, 10) < ?", (today,),
+                     order="due_at", today=date.today())
+    conflicts, conflict_count = contradictions.candidates(db, limit=0)
+    disputed = db.execute("SELECT MIN(version_at), COUNT(*) FROM claims_for_claude WHERE status = 'disputed'"
+                          " AND type <> 'session_note'").fetchone()
+    result = {
         "since": since,
         "collectors": collectors,
         "claims": counts,
+        "claims_by_type": by_type,
         "claude_accuracy": {"confirmed_share": round(counts["confirmed"] / reviewed, 2) if reviewed else None,
                             "reviewed": reviewed},
+        "false_commitments": {"retracted_share": round(commitments.get("retracted", 0) / reviewed_commitments, 2)
+                              if reviewed_commitments else None, "reviewed": reviewed_commitments},
+        "project_matching": {"claims_with_project": with_project, "project_corrected": project_corrected,
+                             "accuracy": round(1 - project_corrected / with_project, 2) if with_project else None},
+        "missed_deadlines": {"count": len(overdue),
+                             "commitments": [{k: c.get(k) for k in ("claim_id", "text", "due_at", "owner", "label")}
+                                             for c in overdue[:10]]},
+        "contradictions": {"possible": conflict_count, "disputed_claims": disputed[1],
+                           "oldest_disputed_days": (date.today() - date.fromisoformat(disputed[0][:10])).days
+                           if disputed[0] else None},
         "citation_coverage": round(cited / len(open_claims), 2) if open_claims else None,
         "session_notes": db.execute("SELECT COUNT(*) FROM claims WHERE type = 'session_note' AND created_at >= ?",
                                     (since,)).fetchone()[0],
+        "online": {"connectors_on": [c["connector"] for c in connectors(db) if c["allowed"]],
+                   "note": "Connector availability is seen only when you use one; say which failed."},
         "found": True,
     }
+    usage = app_usage.status(db)
+    if usage.get("source_id"):
+        result["app_usage"] = {k: usage.get(k) for k in ("on", "mode", "mode_in_use", "extension", "fallback",
+                                                         "average_sample_ms", "cpu_share_at_most", "last_sample_at")}
+    return result
 
 
 # For read_confidential: temporary views that shadow labels and the *_for_claude views on

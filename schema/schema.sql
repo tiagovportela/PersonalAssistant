@@ -1,4 +1,4 @@
--- Personal Work Intelligence layer: SQLite schema (schema version 4).
+-- Personal Work Intelligence layer: SQLite schema (schema version 5).
 -- A store made by an older version is upgraded by the files in migrations/.
 --
 -- Times are UTC text, 'YYYY-MM-DDTHH:MM:SSZ'. Ids that come from a source are
@@ -12,7 +12,7 @@
 PRAGMA journal_mode = WAL;
 
 CREATE TABLE schema_version (version INTEGER NOT NULL) STRICT;
-INSERT INTO schema_version VALUES (4);
+INSERT INTO schema_version VALUES (5);
 
 -- Sources: each allowlisted repository, folder or profile ------------------
 
@@ -285,14 +285,16 @@ WHERE cc.status <> 'retracted'
 --
 -- events_fts keeps its own copy of an event's searchable text: the title, plus
 -- `details` from the payload (a commit's redacted message body and file paths,
--- a push's branch), because the reasons behind a change are usually in the body.
+-- a push's branch, a Firefox visit's address, an app span's app), because the
+-- reasons behind a change are usually in the body.
 
 CREATE VIRTUAL TABLE events_fts USING fts5 (
     title, details, tokenize = 'unicode61 remove_diacritics 2');
 CREATE TRIGGER events_fts_insert AFTER INSERT ON events BEGIN
     INSERT INTO events_fts (rowid, title, details) VALUES (NEW.seq, NEW.title,
         COALESCE(json_extract(NEW.payload, '$.body'), '') || ' ' || COALESCE(json_extract(NEW.payload, '$.branch'), '')
-        || ' ' || COALESCE((SELECT group_concat(value, ' ') FROM json_each(NEW.payload, '$.files')), ''));
+        || ' ' || COALESCE((SELECT group_concat(value, ' ') FROM json_each(NEW.payload, '$.files')), '')
+        || ' ' || COALESCE(json_extract(NEW.payload, '$.url'), '') || ' ' || COALESCE(json_extract(NEW.payload, '$.app'), ''));
 END;
 CREATE TRIGGER events_fts_delete AFTER DELETE ON events BEGIN
     DELETE FROM events_fts WHERE rowid = OLD.seq;
@@ -301,7 +303,8 @@ CREATE TRIGGER events_fts_update AFTER UPDATE OF title, payload ON events BEGIN
     DELETE FROM events_fts WHERE rowid = OLD.seq;
     INSERT INTO events_fts (rowid, title, details) VALUES (NEW.seq, NEW.title,
         COALESCE(json_extract(NEW.payload, '$.body'), '') || ' ' || COALESCE(json_extract(NEW.payload, '$.branch'), '')
-        || ' ' || COALESCE((SELECT group_concat(value, ' ') FROM json_each(NEW.payload, '$.files')), ''));
+        || ' ' || COALESCE((SELECT group_concat(value, ' ') FROM json_each(NEW.payload, '$.files')), '')
+        || ' ' || COALESCE(json_extract(NEW.payload, '$.url'), '') || ' ' || COALESCE(json_extract(NEW.payload, '$.app'), ''));
 END;
 
 CREATE VIRTUAL TABLE claims_fts USING fts5 (
@@ -325,6 +328,15 @@ CREATE TRIGGER artifacts_fts_update AFTER UPDATE OF title ON artifacts BEGIN
     INSERT INTO artifacts_fts (artifacts_fts, rowid, title) VALUES ('delete', OLD.seq, OLD.title);
     INSERT INTO artifacts_fts (rowid, title) VALUES (NEW.seq, NEW.title);
 END;
+
+-- Settings -----------------------------------------------------------------
+
+-- My choices that aren't an allowlist: 'app_usage.mode' is titles, apps or time.
+CREATE TABLE settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    changed_at  TEXT NOT NULL
+) STRICT;
 
 -- Retention and audit ------------------------------------------------------
 

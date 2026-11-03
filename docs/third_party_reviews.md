@@ -22,7 +22,7 @@ de7ab71d0c22a3c43b8acefda75cab44b55b6db5585fc858ce04025149a02ee7  extension.js
 1552abe743a17d164571370b20d820406cfeb044e2833b3e1d0ca2f8d3071101  metadata.json
 ```
 
-The Phase 4 installer will do this step, so it's repeatable.
+`pwi app-usage on` does this step (Phase 4): the files are kept unchanged in [`third_party/focused-window-dbus`](../third_party/focused-window-dbus), checked against these checksums before every install, and installed under the identifier `focused-window-dbus-pinned@pwi.local`, which extensions.gnome.org doesn't know, so GNOME never replaces them with an update. `pwi app-usage off` removes it again, since it exposes window titles to other programs on the session bus.
 
 ## Google Chat MCP servers
 

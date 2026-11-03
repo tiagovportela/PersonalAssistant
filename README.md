@@ -39,6 +39,9 @@ A folder allowlists every Git repository in it, up to 4 levels down. It skips hi
 | Command | What it does |
 |---|---|
 | `pwi add-repo PATH...` | Allowlists Git repositories, or every repository in a folder. Each becomes a project, and the Claude Code index turns on for sessions inside them. Collects straight away. |
+| `pwi add-firefox [PROFILE]` | Turns on Firefox history: the profile Firefox opens by default (snap, classic or Flatpak), or the one given. Collects straight away. |
+| `pwi app-usage on [--mode titles\|apps\|time]` | Records which apps and windows you use, and active vs idle time. Installs the reviewed GNOME extension, pinned; log out and back in once. |
+| `pwi app-usage off`, `status` | Stops it and removes the extension; or shows what's recorded and what sampling costs. |
 | `pwi sources` | Lists sources, how many events each holds, and the last collection, with any error. |
 | `pwi disable ID` / `pwi enable ID` | Stops collecting a source and hides it from Claude; its data stays. |
 | `pwi collect` | Collects every enabled source now. |
@@ -56,6 +59,12 @@ The service collects at login (catching up after a shutdown) and then every hour
 **What's collected:**
 - **Git:** commits, merges and pushes from the last 90 days, plus a snapshot of the branch, ahead/behind and uncommitted-change counts whenever it changes. Only metadata is kept: subject, message (secrets redacted), author, times, files and line counts. Pushes come from Git's reflog. No hooks are installed, and Git never takes a lock while collecting.
 - **Claude Code:** an index of sessions whose working folder is inside an allowlisted repository: start, end, Claude Code's title for the session (redacted), and prompt count. Session content is never copied; it stays in `~/.claude/projects` until Claude Code deletes it after 30 days.
+- **Firefox** (Phase 4, once you turn it on): every page you open, read each hour from a copy of the profile's history, since Firefox locks the original. It's the one source read in full, so what's kept is cut down instead: only http and https pages you opened (not frames, downloads, reloads or redirect steps), never local addresses such as the frontend's, and no URL parameters that look like secrets (token, code, key, password, session, signature…) or tracking, no user names or passwords in addresses, no long random path parts. Titles are redacted. A visit to a project's GitHub repository, Notion page or Drive folder is linked to the project. A visit you delete in Firefox disappears from Claude's view at the next pass.
+- **App usage** (Phase 4, once you turn it on): every 10 seconds, the focused window (through the reviewed [Focused Window D-Bus](third_party/focused-window-dbus) extension, since Wayland hides it) and the time since your last input, saved every 5 minutes as spans: a window, active time, or idle time (2 minutes without input, starting at your last input). Never keystrokes, the clipboard or the screen. Choose what's kept in the frontend's Sources page: app names and window titles (the default), app names only, or active and idle time only. Private browsing and password manager windows never keep their title. A window title naming a project's folder is linked to the project. If sampling gets slow, it falls back to active and idle time by itself, and `get_metrics` says so. On GNOME Shell older than 49 only active and idle time can be recorded.
+
+Claude sees browsing and computer time as summaries (in `get_day`, `get_week` and `get_project`) and through search, as context: never as proof that something was done.
+
+**Contradictions** (Phase 4): whenever Claude saves a claim, and in the end-of-day review, weekly review and project resumption, the layer points out pairs of claims about the same project that use mostly the same words but differ checkably: one negated, opposite words (keep/remove, manter/remover), "instead of", different numbers or dates, or two due dates or owners for one commitment. Nothing is changed by itself: you say whether they conflict (both become disputed), one replaced the other (the older becomes superseded), or they don't conflict, and the pair isn't suggested again.
 
 **Upgrade:** `git pull && python3 install.py`. The service restarts with the new code, and upgrades the store if its schema changed, after copying it to `store.db.bak-v<old version>`. Claude Desktop's bridge reconnects on its own, so Claude Desktop only needs a restart when the tool list changes.
 
@@ -116,6 +125,7 @@ Reviews of the third-party code the brief needs (the GNOME Focused Window extens
 | What | Where |
 |---|---|
 | Store (SQLite) | `~/.local/share/pwi/store.db` |
+| GNOME extension, when app usage is on | `~/.local/share/gnome-shell/extensions/focused-window-dbus-pinned@pwi.local` |
 | Evaluation labels and reports | `~/.local/share/pwi/evaluation` |
 | `pwi` command | `~/.local/bin/pwi` |
 | Installed code | `~/.local/share/pwi/app` (`version.json` says which commit) |
@@ -126,10 +136,11 @@ Reviews of the third-party code the brief needs (the GNOME Focused Window extens
 
 | Folder | Contents |
 |---|---|
-| [`service/`](service) | The background service (`server.py`), the bridge Claude Desktop starts (`bridge.py`), the `pwi` CLI (`cli.py`), the collectors (`collect_*.py`), the read tools (`reads.py`), the write tools (`writes.py`), retention (`retention.py`), the frontend's web server and admin actions (`web.py`, `admin.py`), the evaluation (`evaluation.py`), secret redaction, the store setup and the MCP handlers. |
+| [`service/`](service) | The background service (`server.py`), the bridge Claude Desktop starts (`bridge.py`), the `pwi` CLI (`cli.py`), the collectors (`collect_*.py`), app usage and its GNOME extension installer (`app_usage.py`, `gnome_extension.py`), contradiction detection (`contradictions.py`), the read tools (`reads.py`), the write tools (`writes.py`), retention (`retention.py`), the frontend's web server and admin actions (`web.py`, `admin.py`), the evaluation (`evaluation.py`), secret redaction, the store setup and the MCP handlers. |
 | [`contracts/`](contracts) | The MCP tool contracts, validation and the six experiences' instructions. |
 | [`schema/`](schema) | The SQLite schema, and `migrations/` that upgrade an older store. |
 | [`frontend/`](frontend) | The React frontend. `dist/` is the built app the service serves, committed so the laptop never needs Node.js. |
+| [`third_party/`](third_party) | The reviewed GNOME extension, unchanged from upstream at the reviewed commit; installed only after a checksum check. |
 | [`bench/`](bench) | The Phase 0 Whisper benchmark, with its own hash-pinned dependencies. |
 | [`spikes/`](spikes) | Phase 0 spike, kept for reference. |
 
@@ -138,7 +149,7 @@ Reviews of the third-party code the brief needs (the GNOME Focused Window extens
 Each test uses temporary folders and never touches an installed layer. Run them on both Python versions before pushing:
 
 ```bash
-for t in schema/test_schema.py contracts/test_tools.py contracts/test_experiences.py service/test_service.py service/test_collectors.py service/test_reads.py service/test_writes.py service/test_privacy.py service/test_web.py service/test_evaluation.py service/test_online.py service/test_google_chat.py test_install.py; do
+for t in schema/test_schema.py contracts/test_tools.py contracts/test_experiences.py service/test_service.py service/test_collectors.py service/test_reads.py service/test_writes.py service/test_privacy.py service/test_web.py service/test_evaluation.py service/test_online.py service/test_google_chat.py service/test_activity.py test_install.py; do
   python3 -I "$t" || break
 done
 ```
@@ -155,4 +166,4 @@ To test on Python 3.14 on the dev PC, use `uv python install 3.14` and run the s
 
 ## Status
 
-Phases 1 and 2 are built. All 20 tools work, with validation. The service collects Git and Claude Code sessions, saves claims and session notes, applies retention once a day, and serves the local frontend. Claude uses Gmail, Drive and Notion within the allowlist you set, and Google Chat through the layer's own read-only sign-in, saves commitments and decisions from them with the message or document as evidence, and links projects to where they live online. Next: the 5-day evaluation on real workdays (`pwi eval`), then Phase 3, meetings.
+Phases 1, 2 and 4 are built; Phase 3 (meetings) is on hold. All 20 tools work, with validation. The service collects Git, Claude Code sessions, Firefox history and app usage, saves claims and session notes, points out possible contradictions, applies retention once a day, and serves the local frontend. Claude uses Gmail, Drive and Notion within the allowlist you set, and Google Chat through the layer's own read-only sign-in, saves commitments and decisions from them with the message or document as evidence, and links projects to where they live online. `get_metrics` reports freshness, ingestion lag, project linking, claims by type, false commitments, project corrections, missed deadlines, contradictions and app usage's overhead. Next: the 5-day evaluation on real workdays (`pwi eval`).

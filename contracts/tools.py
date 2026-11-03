@@ -32,6 +32,8 @@ ITEM = {
 # Where a project lives in each online source; Claude may add these, only I remove them.
 ALIAS_KINDS = ["github_repo", "notion", "drive_folder", "gmail_query", "chat_space", "calendar_match"]
 
+SEARCH_KINDS = ["git", "claude_code", "claims", "artifacts", "firefox", "app_usage"]
+
 ARTIFACT_KINDS = ["branch", "file", "pull_request", "release", "work_item",
                   "document", "message", "calendar_event", "web_page"]
 
@@ -103,30 +105,37 @@ TOOLS = [
          "and which online connectors I allow you to use, with their scope. Use only connectors that are on.",
          obj()),
     read("search",
-         "Keyword search over events, claims and artifact titles. Try several wordings; accents are ignored.",
+         "Keyword search over events, claims, artifact titles and the Firefox pages I visited. Try several "
+         "wordings; accents are ignored. Add app_usage to kinds to search window titles too.",
          obj({
              "query": {"type": "string", "minLength": 1, "description": "Plain keywords."},
              "project": PROJECT,
              "since": DAY,
              "until": DAY,
              "kinds": {"type": "array", "uniqueItems": True,
-                       "items": {"type": "string", "enum": ["git", "claude_code", "claims", "artifacts"]}},
+                       "items": {"type": "string", "enum": SEARCH_KINDS},
+                       "description": "Default: git, claude_code, claims, artifacts and firefox."},
              "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
          }, ["query"])),
     read("get_day",
          "Everything the layer knows about one workday: events by project, claims about that day, "
-         "commitments due, unconfirmed count, and coverage.",
+         "commitments due, unconfirmed count, computer time (active and idle, by app and project), the pages "
+         "I read in Firefox, and coverage.",
          obj({"day": DAY}, ["day"])),
     read("get_week",
-         "Everything for the Monday-to-Sunday week containing a date, plus aging work: overdue commitments, "
-         "open blockers and claims unconfirmed for more than 7 days.",
+         "Everything for the Monday-to-Sunday week containing a date, with focus time and pages per project, "
+         "plus aging work: overdue commitments, open blockers, claims unconfirmed for more than 7 days and "
+         "possible contradictions.",
          obj({"week_of": {**DAY, "description": "Any date in the week, YYYY-MM-DD."}}, ["week_of"])),
     read("get_project",
          "Resumption context for one project: latest objective, last verified state (branch, last commit, "
-         "uncommitted changes), open blockers, recent decisions, open commitments and connector lookups to run.",
+         "uncommitted changes), open blockers, recent decisions, open commitments, possible contradictions, "
+         "recent pages and focus time, and connector lookups to run.",
          obj({"project": PROJECT}, ["project"])),
     read("list_unconfirmed",
-         "Every proposed or disputed claim, oldest first, with its evidence, plus the workdays and projects that have Claude Code sessions but no session note. Includes days I skipped.",
+         "Every proposed or disputed claim, oldest first, with its evidence, plus the workdays and projects that have "
+         "Claude Code sessions but no session note, and pairs of claims that may contradict each other. Includes "
+         "days I skipped.",
          obj({"project": PROJECT, "since": DAY})),
     read("read_claude_sessions",
          "Claude Code sessions for one workday with secrets redacted, for writing session notes. "
@@ -152,8 +161,9 @@ TOOLS = [
          obj({"event_id": {"type": "string", "description": "An event id, e.g. git:commit:<sha>."},
               "evidence_id": {"type": "integer", "minimum": 1, "description": "From a claim's evidence list."}})),
     read("get_metrics",
-         "Quality metrics: collector freshness and gaps, duplicates avoided, citation coverage, "
-         "and the share of proposed claims I confirmed, corrected or retracted.",
+         "Quality metrics: collector freshness, ingestion lag, gaps and duplicates avoided; how much is linked to "
+         "a project; app-usage overhead; claims I confirmed, corrected or retracted, by type; project corrections; "
+         "missed deadlines; possible contradictions; and citation coverage.",
          obj({"since": DAY})),
 
     # Write tools: always allowed. They add or version items; none deletes anything.
@@ -195,8 +205,11 @@ TOOLS = [
 
     # Approval tools: Claude Desktop asks me every time.
     write("set_claim_status",
-          "Confirms, disputes or retracts a claim after I say so. Claude Desktop asks for my approval each time.",
-          obj({"claim_id": CLAIM_ID, "status": {"type": "string", "enum": ["supported", "disputed", "retracted"]},
+          "Confirms, disputes, retracts or supersedes a claim after I say so. superseded: a newer claim replaces "
+          "it; link the newer one to it with link_items (rel: supersedes) and name it in reason. Claude Desktop "
+          "asks for my approval each time.",
+          obj({"claim_id": CLAIM_ID, "status": {"type": "string",
+                                                "enum": ["supported", "disputed", "retracted", "superseded"]},
                "reason": {"type": "string"}}, ["claim_id", "status"])),
     write("add_confidential_label",
           "Marks an item confidential so it is no longer sent to Claude. Claude Desktop asks for my approval "

@@ -61,7 +61,11 @@ def routes():
         ("GET", r"/api/projects", lambda app, db, m, q, b: admin.projects(db)),
         ("PUT", r"/api/projects/([^/]+)", lambda app, db, m, q, b: admin.update_project(db, unquote(m[1]), b)),
         ("GET", r"/api/events", lambda app, db, m, q, b: admin.events(
-            db, one(q, "project"), one(q, "day"), one(q, "q"), one(q, "source"), one(q, "limit") or 200)),
+            db, one(q, "project"), one(q, "day"), one(q, "q"), one(q, "source"), one(q, "limit") or 200,
+            one(q, "kind") or "work")),
+        ("GET", r"/api/activity-sources", lambda app, db, m, q, b: admin.activity_sources(db)),
+        ("POST", r"/api/firefox", lambda app, db, m, q, b: admin.add_firefox(db)),
+        ("PUT", r"/api/app-usage", lambda app, db, m, q, b: admin.set_app_usage(db, bool(b.get("enabled")), b.get("mode"))),
         ("GET", r"/api/claims", lambda app, db, m, q, b: admin.claims(
             db, one(q, "status"), one(q, "project"), one(q, "q"), one(q, "limit") or 200)),
         ("GET", r"/api/claims/([^/]+)", lambda app, db, m, q, b: admin.claim_history(db, unquote(m[1]))),

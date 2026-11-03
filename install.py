@@ -100,6 +100,7 @@ def copy_app(commit):
     shutil.copytree(REPO / "service", new / "service", ignore=skip)
     shutil.copytree(REPO / "contracts", new / "contracts", ignore=skip)
     shutil.copytree(REPO / "schema", new / "schema", ignore=skip)  # schema.sql and migrations/
+    shutil.copytree(REPO / "third_party", new / "third_party", ignore=skip)  # the reviewed GNOME extension
     shutil.copytree(REPO / "frontend" / "dist", new / "frontend" / "dist")  # built here; no Node.js needed
     (new / "version.json").write_text(json.dumps({
         "commit": commit,
@@ -234,6 +235,8 @@ def install(use_systemd):
     if not on_path:
         print(f"'{paths.BIN_DIR}' isn't on your PATH in this terminal yet; after your next login, 'pwi' works on its own.")
     print(f"Sources and their last collection: {pwi} sources. Settings, deletion and labels: {pwi} open")
+    print(f"Optional: Firefox history with {pwi} add-firefox, and app usage with {pwi} app-usage on "
+          "(or both in the frontend's Sources page).")
     print("Logs: journalctl --user -u pwi -f")
 
 

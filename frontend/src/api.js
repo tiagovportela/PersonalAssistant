@@ -26,6 +26,10 @@ export const EVENT_NAMES = {
   "git.merge": "Merge",
   "git.push": "Push",
   "claude_code.session": "Claude Code session",
+  "firefox.visit": "Page",
+  "app.focus": "Window",
+  "app.active": "Active",
+  "app.idle": "Idle",
 };
 
 // Times from Claude-facing data carry their own offset ("2026-11-02T20:46+01:00"): show them as they are.
