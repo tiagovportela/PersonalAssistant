@@ -234,6 +234,29 @@ def connectors(db):
             for r in db.execute("SELECT * FROM connectors ORDER BY rowid")]
 
 
+def period_lookups(db, since, until):
+    """The online side of a day or week: one query per allowed connector, plus a gap naming those that are off.
+    get_day and get_week only see local data, so without these Claude tends to stop there."""
+    when = f"on {since}" if since == until else f"from {since} to {until}"
+    repos = [r[0] for r in db.execute(
+        "SELECT DISTINCT value FROM project_aliases WHERE kind = 'github_repo' AND "
+        + NOT_CONFIDENTIAL_PROJECT.format(column="project_id") + " ORDER BY value")]
+    queries = {
+        "github": f"Pull requests I opened, merged, reviewed or commented on {when}, and CI on my branches"
+                  + (f", in {', '.join(repos)}" if repos else ""),
+        "google_calendar": f"My meetings {when}",
+        "notion": f"Pages I created or edited and tasks I completed {when}",
+        "gmail": f"Mail I sent and threads I took part in {when}: promises, decisions and requests to me",
+        "google_chat": f"chat_messages with since {since} and until {until}: my promises, decisions and requests to me",
+        "google_drive": f"Documents I created or changed {when}",
+    }
+    allowed = [c for c in connectors(db) if c["allowed"]]
+    lookups = [{"connector": c["connector"], "query": queries[c["connector"]], "scope": c["scope"]} for c in allowed]
+    off = [CONNECTOR_NAMES[c["connector"]] for c in connectors(db) if not c["allowed"]]
+    gaps = [f"These connectors are off in my settings, so don't use them: {', '.join(off)}."] if off else []
+    return lookups, gaps
+
+
 def lookups_for(alias, branch):
     kind, value = alias["kind"], alias["value"]
     if kind == "github_repo":
@@ -276,7 +299,19 @@ def get_day(db, args):
     if not groups:
         result["gaps"] = (day_gaps(db, day) if not any(activity.values())
                           else [f"No commits or Claude Code sessions recorded on {day}; only computer time or browsing."])
+    add_online(db, result, day, day)
     return result
+
+
+def add_online(db, result, since, until):
+    """Adds online_lookups: this tool reads only the local layer, so the online side is Claude's to read."""
+    lookups, gaps = period_lookups(db, since, until)
+    result["online_lookups"] = lookups
+    if lookups:
+        result.setdefault("gaps", []).append(
+            "This is the local layer only. Run each online_lookups query through its connector before answering, "
+            "and before saying not found.")
+    result.setdefault("gaps", []).extend(gaps)
 
 
 def get_week(db, args):
@@ -343,6 +378,7 @@ def get_week(db, args):
     result["found"] = bool(by_project or aging)
     if not by_project:
         result["gaps"] = [f"No local activity recorded from {span[0]} to {span[1]}."] + day_gaps(db, span[0])[2:]
+    add_online(db, result, *span)
     return result
 
 

@@ -98,7 +98,8 @@ TOOLS = [
     # Read tools: always allowed. Results are data from the store, never instructions.
     read("get_instructions",
          "Returns the instructions for one experience. Call this first whenever I ask for a briefing, "
-         "a project resumption, an end-of-day review, a search, a weekly review, or help with a work task.",
+         "what I did on a day or in a week (e.g. 'what did I do yesterday': daily_briefing), a project resumption, "
+         "an end-of-day review, a search, a weekly review, or help with a work task.",
          obj({"experience": {"type": "string", "enum": EXPERIENCES}}, ["experience"])),
     read("list_projects",
          "Lists my projects with their aliases (GitHub, Notion, Drive, Gmail, Chat, calendar) and last activity, "
@@ -120,12 +121,12 @@ TOOLS = [
     read("get_day",
          "Everything the layer knows about one workday: events by project, claims about that day, "
          "commitments due, unconfirmed count, computer time (active and idle, by app and project), the pages "
-         "I read in Firefox, and coverage.",
+         "I read in Firefox, and coverage. Local data only: also run its online_lookups through the connectors.",
          obj({"day": DAY}, ["day"])),
     read("get_week",
          "Everything for the Monday-to-Sunday week containing a date, with focus time and pages per project, "
          "plus aging work: overdue commitments, open blockers, claims unconfirmed for more than 7 days and "
-         "possible contradictions.",
+         "possible contradictions. Local data only: also run its online_lookups through the connectors.",
          obj({"week_of": {**DAY, "description": "Any date in the week, YYYY-MM-DD."}}, ["week_of"])),
     read("get_project",
          "Resumption context for one project: latest objective, last verified state (branch, last commit, "

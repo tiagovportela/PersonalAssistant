@@ -124,6 +124,19 @@ def main():
     # lookups follow aliases, but only through allowed connectors
     call("add_project_alias", {"project": "billing", "kind": "notion", "value": f"https://www.notion.so/acme/Billing-{NOTION_ID}"})
     project = call("get_project", {"project": "billing"})
+    day = call("get_day", {"day": D1})
+    check("get_day lists online lookups for that day, only through allowed connectors, and says which are off",
+          {q["connector"] for q in day["online_lookups"]} == {"github", "google_calendar", "notion"}
+          and all(D1 in q["query"] for q in day["online_lookups"])
+          and "acme/billing" in next(q["query"] for q in day["online_lookups"] if q["connector"] == "github")
+          and "acme/notes" not in json.dumps(day["online_lookups"])
+          and any("Gmail, Google Chat, Google Drive" in g for g in day["gaps"])
+          and any("local layer only" in g for g in day["gaps"]))
+    week = call("get_week", {"week_of": D1})
+    check("get_week lists online lookups for the whole week",
+          {q["connector"] for q in week["online_lookups"]} == {"github", "google_calendar", "notion"}
+          and all(week["week"]["from"] in q["query"] and week["week"]["to"] in q["query"]
+                  for q in week["online_lookups"]))
     connectors = {q["connector"] for q in project["lookups"]}
     check("get_project turns aliases into lookups, only for allowed connectors, and says which are off",
           connectors == {"github", "notion"} and any("Gmail" in g for g in project["gaps"]))

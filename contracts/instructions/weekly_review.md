@@ -9,7 +9,7 @@ Use the week I named. Weeks run Monday to Sunday. If I named no week, use the la
 ## Steps
 
 1. Call `get_week` with any date in that week.
-2. Call `list_projects`, then check the connectors for that week:
+2. Call `list_projects`, then check the connectors for that week. `get_week` only holds local work; run every query in its `online_lookups`, which covers these:
    - GitHub: merged PRs, releases, and PRs open for more than 5 days.
    - Notion: tasks completed, and tasks overdue or due next week.
    - Google Calendar: key meetings, such as reviews, demos and decisions.

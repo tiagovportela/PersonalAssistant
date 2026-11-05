@@ -10,9 +10,11 @@ Use the day I named. "Yesterday" means the previous workday: on a Monday, that's
 
 1. Call `get_day` for that day.
 2. Call `list_projects` to get each project's GitHub, Notion and calendar aliases.
-3. Look up that workday in the connectors my allowlist allows:
+3. Look up that workday in the connectors my allowlist allows. `get_day` only holds local work; its `online_lookups` lists one query per allowed connector, so run every one of them:
+   - GitHub: pull requests I opened, merged, reviewed or commented on that day.
+   - Google Calendar: the meetings I had that day.
    - Gmail, and Google Chat with `chat_messages`: what I promised, decisions made in threads, and requests to me still unanswered.
-   - Drive and Notion: documents I wrote or changed that day.
+   - Drive and Notion: documents I wrote or changed that day, and Notion tasks I completed.
 4. Look up what comes next through the connectors:
    - Google Calendar: my meetings for the next workday.
    - Notion: tasks assigned to me that are due in the next 3 workdays, or overdue.
@@ -23,7 +25,7 @@ Use the day I named. "Yesterday" means the previous workday: on a Monday, that's
 
 ## Output
 
-**What I did**: completed work, investigations, decisions, documents written and failed attempts, grouped by project. Each item cites its evidence and is labelled.
+**What I did**: completed work, investigations, decisions, pull requests, meetings, documents written and failed attempts, grouped by project, from both the layer and the connectors. Each item cites its evidence and is labelled.
 
 **Time and reading**: from `computer_time` and `browsing`, if present: active hours and the projects that took most of them, in one line, and up to 5 pages I read that matter for the work.
 

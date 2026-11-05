@@ -16,7 +16,7 @@ TOOL_NAMES = {t["name"] for t in TOOLS}
 # Tool arguments, result fields and status values the templates may name in backticks.
 KNOWN_FIELDS = {
     "event_id", "evidence_id", "artifact_id", "artifact_kind", "read_at", "coverage.stale_sources",
-    "due", "lookups", "aging", "cursor", "days_missing_session_notes", "project", "since", "until",
+    "due", "lookups", "online_lookups", "aging", "cursor", "days_missing_session_notes", "project", "since", "until",
     "contradicts", "supported", "retracted", "disputed",
     "connectors", "allowed", "scope", "refs", "references", "owner", "me", "due_at", "message", "document", "from_me",
     "browsing", "computer_time", "computer_time_by_day", "focus_minutes", "pages_visited", "recent_pages",
