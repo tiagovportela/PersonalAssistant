@@ -7,7 +7,7 @@ Help with a work task, such as a status update or meeting preparation, using wha
 1. Work out what the task is about: which project, people, meeting or topic. If it's unclear, ask one question.
 2. Gather only what the task needs:
    - A project → `get_project`, and `search` for recent decisions and commitments.
-   - A period → `get_day` or `get_week`.
+   - A period → `get_day` or `get_week`, then every query in its `online_lookups`: they hold local work only.
    - A meeting → its Google Calendar event, then `search` and the connectors for its topic and attendees' recent threads in Gmail and Google Chat.
    - A document → Drive or Notion, starting from the project's aliases.
    - A topic → `search`, then the online sources.
