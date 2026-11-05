@@ -55,6 +55,8 @@ def brief_event(e):
         item.update({k: p.get(k) for k in ("branch", "commits")})
     elif e["type"] == "claude_code.session":
         item["prompts"] = p.get("prompts")
+        if p.get("origin") == "cloud":
+            item["origin"] = "cloud"
     elif e["type"] == "git.snapshot":
         item.update({k: p.get(k) for k in ("branch", "head", "upstream", "ahead", "behind",
                                            "staged", "unstaged", "untracked", "conflicted")})
@@ -702,6 +704,9 @@ def session_turns(path, offset_min):
                 flush()
                 reply, reply_at = [], None
                 turns.append({"role": "me", "at": at(entry), "text": clip(redact(text.strip()))})
+            elif entry.get("type") == "user" and entry.get("isMeta") and is_prompt(message):
+                flush()  # feedback from a hook: Claude's reply before it stays, and what follows is a new reply
+                reply, reply_at = [], None
             elif entry.get("type") == "assistant" and isinstance(content, list):
                 for block in content:
                     if not isinstance(block, dict):

@@ -8,6 +8,9 @@ frontend exists. install.py puts a `pwi` launcher in ~/.local/bin.
     pwi disable ID         stop collecting a source and hide it from Claude; its data stays
     pwi enable ID          turn it back on
     pwi collect            collect every enabled source now
+    pwi import-cloud-session ID  bring a Claude Code cloud session (id or claude.ai/code link) into the
+                           layer: runs claude --teleport in this checkout and keeps a copy; --repo PATH
+                           for another checkout, --file F to import a transcript you already have
     pwi cleanup            apply retention now (it also runs once a day by itself)
     pwi open [SECTION]     open the frontend in the browser, e.g. pwi open claims
     pwi eval label [DAY]   write down what really happened on a workday (default: today)
@@ -39,6 +42,7 @@ import webbrowser  # noqa: E402
 from contextlib import closing  # noqa: E402
 
 import app_usage  # noqa: E402
+import cloud_sessions  # noqa: E402
 import collect  # noqa: E402
 import evaluation  # noqa: E402
 import gnome_extension  # noqa: E402
@@ -188,6 +192,10 @@ def main():
     for name, text in (("disable", "stop collecting a source and hide it from Claude"), ("enable", "turn a source back on")):
         commands.add_parser(name, help=text).add_argument("source_id", type=int, metavar="ID")
     commands.add_parser("collect", help="collect every enabled source now")
+    cloud = commands.add_parser("import-cloud-session", help="bring a Claude Code cloud session into the layer")
+    cloud.add_argument("session", nargs="?", help="the session id (session_...) or its claude.ai/code link")
+    cloud.add_argument("--repo", help="your checkout of the session's repository (default: this folder)")
+    cloud.add_argument("--file", help="import this transcript (.jsonl) instead of teleporting")
     commands.add_parser("cleanup", help="apply retention now; it also runs once a day by itself")
     commands.add_parser("open", help="open the frontend in the browser").add_argument(
         "section", nargs="?", default="", help="e.g. sources, claims, confidential or retention")
@@ -249,6 +257,11 @@ def main():
             elif args.command in ("enable", "disable"):
                 sources.set_enabled(db, args.source_id, args.command == "enable")
                 print(f"Source {args.source_id} {args.command}d.")
+            elif args.command == "import-cloud-session":
+                done = cloud_sessions.import_session(db, args.session, args.file, args.repo)
+                print(f"{'Updated' if done['replaced'] else 'Imported'} session {done['session_file']} into project "
+                      f"'{done['project']}': {done['title'] or 'untitled'}, {done['prompts']} prompt(s). Collecting...")
+                print_runs(collect.run(paths.STORE_PATH, "manual"))
             elif args.command == "collect":
                 print_runs(collect.run(paths.STORE_PATH, "manual"))
             elif args.command == "eval" and args.step == "label":

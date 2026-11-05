@@ -19,4 +19,5 @@ STORE_PATH = DATA_DIR / "store.db"
 APP_DIR = DATA_DIR / "app"  # installed code; replaced on every install, unlike the store
 BIN_DIR = Path.home() / ".local" / "bin"  # on PATH by default on Ubuntu
 
+CLAUDE_CLOUD = DATA_DIR / "claude_cloud"  # copies of cloud sessions I imported; kept until deleted
 CLAUDE_PROJECTS = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"

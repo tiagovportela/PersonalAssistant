@@ -21,6 +21,7 @@ os.environ.update({"HOME": str(TMP), "XDG_DATA_HOME": str(TMP / "data"), "XDG_CO
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import cloud_sessions  # noqa: E402
 import collect  # noqa: E402
 import collect_git  # noqa: E402
 import paths  # noqa: E402
@@ -250,6 +251,7 @@ def main():
     check("pwi reports a bad source id as an error, not a traceback",
           bad.returncode == 1 and "no source 999" in bad.stderr)
     test_folders(env, cli)
+    test_cloud_sessions(env, cli, work)
     check("foreign keys hold", sqlite3.connect(paths.STORE_PATH).execute("PRAGMA foreign_key_check").fetchall() == [])
 
 
@@ -291,6 +293,101 @@ def test_folders(env, cli):
         check("a folder with no repositories is an error", False)
     except CollectorError as e:
         check("a folder with no repositories is an error", "no Git repositories" in str(e))
+    db.close()
+
+
+def test_cloud_sessions(env, cli, work):
+    db = store.connect(paths.STORE_PATH)
+    work = Path(os.path.realpath(work))
+    sh(work, "git", "checkout", "-q", "--", ".")
+    sh(work, "git", "clean", "-qfd")
+    copies = paths.CLAUDE_CLOUD
+    check("a cloud session id is found in a claude.ai/code link",
+          cloud_sessions.cloud_session_id("https://claude.ai/code/session_012Tbapi?x=1") == "session_012Tbapi")
+
+    # teleport: a stand-in for `claude --teleport` that checks out a branch and writes the session file
+    def fake_claude(args, cwd):
+        assert args == ["claude", "--teleport", "session_ABC123"] and cwd == str(work)
+        sh(work, "git", "checkout", "-q", "-b", "claude/cloud-branch")
+        session_file(paths.CLAUDE_PROJECTS / "-work-tp", "44444444-dddd", str(work), "Cloud work", ["cloud prompt"])
+        return subprocess.CompletedProcess(args, 0)
+    done = cloud_sessions.import_session(db, "https://claude.ai/code/session_ABC123", repo=str(work / "service"),
+                                         run=fake_claude)
+    check("import-cloud-session teleports in the checkout, copies the session file and switches the branch back",
+          done["project"] == "work" and done["session_file"] == "44444444-dddd"
+          and (copies / "44444444-dddd.jsonl").exists()
+          and json.loads((copies / "44444444-dddd.json").read_text())["cloud_session"] == "session_ABC123"
+          and subprocess.run(["git", "-C", str(work), "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True,
+                             text=True).stdout.strip() == "main")
+    collect.run(paths.STORE_PATH)
+    row = db.execute("SELECT * FROM events WHERE id = 'claude_code:session:44444444-dddd'").fetchone()
+    check("the copy is indexed like a local session, with origin cloud, once, not also as the local file",
+          row and row["project_id"] == "work" and row["payload_ref"] == str(copies / "44444444-dddd.jsonl")
+          and json.loads(row["payload"])["origin"] == "cloud"
+          and db.execute("SELECT COUNT(*) FROM events WHERE id LIKE '%44444444-dddd'").fetchone()[0] == 1)
+
+    local = paths.CLAUDE_PROJECTS / "-work-tp" / "44444444-dddd.jsonl"
+    with open(local, "a") as f:
+        f.write(json.dumps({"type": "user", "cwd": str(work), "timestamp": "2026-11-02T12:00:00.000Z",
+                            "message": {"role": "user", "content": "kept going locally"}}) + "\n")
+    collect.run(paths.STORE_PATH)
+    local.unlink()
+    collect.run(paths.STORE_PATH)
+    row = db.execute("SELECT * FROM events WHERE id = 'claude_code:session:44444444-dddd'").fetchone()
+    check("a session continued locally refreshes the copy, which outlives the local file",
+          row["gone_at"] is None and json.loads(row["payload"])["prompts"] == 2)
+
+    def no_file(args, cwd):
+        return subprocess.CompletedProcess(args, 1)
+    try:
+        cloud_sessions.import_session(db, "session_XYZ", repo=str(work), run=no_file)
+        check("a teleport that writes nothing is an error", False)
+    except CollectorError as e:
+        check("a teleport that writes nothing is an error that suggests --file", "--file" in str(e))
+    (work / "dirty.txt").write_text("x")
+    try:
+        cloud_sessions.import_session(db, "session_XYZ", repo=str(work), run=fake_claude)
+        check("teleport refuses a checkout with uncommitted changes", False)
+    except CollectorError as e:
+        check("teleport refuses a checkout with uncommitted changes", "uncommitted" in str(e))
+    (work / "dirty.txt").unlink()
+
+    # --file: a transcript from a cloud container, whose working folder is /home/user/<repo>
+    transcript = session_file(TMP / "downloads", "55555555-eeee", "/home/user/work", "From the cloud", ["hi", "more"])
+    added = subprocess.run([*cli, "import-cloud-session", "--file", str(transcript)], env=env, capture_output=True,
+                           text=True)
+    check("pwi import-cloud-session --file maps /home/user/<repo> to the allowlisted repository and collects",
+          added.returncode == 0 and "into project 'work'" in added.stdout
+          and db.execute("SELECT project_id FROM events WHERE id = 'claude_code:session:55555555-eeee'").fetchone()[0] == "work")
+    renamed = TMP / "downloads" / "transcript.jsonl"
+    lines = [{"type": "user", "cwd": "/home/user/work", "sessionId": "77777777-abcd", "timestamp": "2026-11-03T09:00:00.000Z",
+              "message": {"role": "user", "content": "why is it broken?"}},
+             {"type": "assistant", "timestamp": "2026-11-03T09:01:00.000Z",
+              "message": {"role": "assistant", "content": [{"type": "text", "text": "Because of the cache."}]}},
+             {"type": "user", "isMeta": True, "timestamp": "2026-11-03T09:02:00.000Z",
+              "message": {"role": "user", "content": "Stop hook feedback: push your commits"}},
+             {"type": "assistant", "timestamp": "2026-11-03T09:03:00.000Z",
+              "message": {"role": "assistant", "content": [{"type": "tool_use", "name": "Bash", "input": {}}]}},
+             {"type": "assistant", "timestamp": "2026-11-03T09:04:00.000Z",
+              "message": {"role": "assistant", "content": [{"type": "text", "text": "Pushed."}]}}]
+    renamed.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    imported = cloud_sessions.import_session(db, file=str(renamed))
+    import reads
+    check("a renamed transcript is stored under the session id it records",
+          imported["session_file"] == "77777777-abcd" and (copies / "77777777-abcd.jsonl").exists())
+    check("a reply before hook feedback is kept, and the reply after it is a turn of its own",
+          [t["text"] for t in reads.session_turns(copies / "77777777-abcd.jsonl", 0)]
+          == ["why is it broken?", "Because of the cache.", "Pushed."])
+    unknown = session_file(TMP / "downloads", "66666666-ffff", "/home/user/nowhere", "?", ["x"])
+    bad = subprocess.run([*cli, "import-cloud-session", "--file", str(unknown)], env=env, capture_output=True, text=True)
+    check("a transcript from an unknown repository asks for --repo", bad.returncode == 1 and "--repo" in bad.stderr)
+
+    db.execute("DELETE FROM events WHERE id = 'claude_code:session:55555555-eeee'")
+    db.commit()
+    collect.run(paths.STORE_PATH)
+    check("deleting an imported session's event (retention or me) removes its copy, and it isn't indexed again",
+          not (copies / "55555555-eeee.jsonl").exists() and not (copies / "55555555-eeee.json").exists()
+          and db.execute("SELECT 1 FROM events WHERE id = 'claude_code:session:55555555-eeee'").fetchone() is None)
     db.close()
 
 
