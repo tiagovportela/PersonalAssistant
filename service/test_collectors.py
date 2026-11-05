@@ -382,6 +382,7 @@ def test_cloud_sessions(env, cli, work):
     bad = subprocess.run([*cli, "import-cloud-session", "--file", str(unknown)], env=env, capture_output=True, text=True)
     check("a transcript from an unknown repository asks for --repo", bad.returncode == 1 and "--repo" in bad.stderr)
 
+    test_cloud_list(db, work)
     db.execute("DELETE FROM events WHERE id = 'claude_code:session:55555555-eeee'")
     db.commit()
     collect.run(paths.STORE_PATH)
@@ -389,6 +390,51 @@ def test_cloud_sessions(env, cli, work):
           not (copies / "55555555-eeee.jsonl").exists() and not (copies / "55555555-eeee.json").exists()
           and db.execute("SELECT 1 FROM events WHERE id = 'claude_code:session:55555555-eeee'").fetchone() is None)
     db.close()
+
+
+def test_cloud_list(db, work):
+    db.execute("INSERT OR IGNORE INTO project_aliases VALUES ('github_repo', 'me/work', 'work', 'rule', '2026-11-01T00:00:00Z')")
+    db.commit()
+    listing = TMP / "cloud-sessions.json"
+    listing.write_text(json.dumps({"sessions": [
+        {"id": "session_ABC123", "title": "Cloud work", "updated_at": "2000-01-01T00:00:00.000Z",
+         "environment_kind": "anthropic_cloud", "repos": ["me/work"]},
+        {"id": "session_NEW1", "title": "New", "updated_at": "2026-11-05T10:00:00.000Z",
+         "environment_kind": "anthropic_cloud", "repos": ["https://github.com/Me/Work"]},
+        {"id": "session_ELSE", "environment_kind": "anthropic_cloud", "repos": ["someone/else"]},
+        {"id": "session_BRIDGE", "environment_kind": "bridge"}]}))
+    lines = []
+    checked = cloud_sessions.import_list(db, listing, dry_run=True, say=lines.append)
+    check("--check says which listed sessions are missing or stale, and skips the rest with a reason",
+          [(r["state"], r["outcome"].split(":")[0].split(" (")[0]) for r in checked]
+          == [("current", "up to date"), ("missing", "would import"), ("missing", "skipped"), ("missing", "skipped")]
+          and checked[1]["checkout"] == str(work) and len(lines) == 4)
+
+    teleported = []
+    def fake_claude(args, cwd):
+        sid = args[2]
+        teleported.append(sid)
+        session_file(paths.CLAUDE_PROJECTS / "-work-tp", f"teleport-{sid}-{len(teleported)}", str(work), sid, ["p"])
+        return subprocess.CompletedProcess(args, 0)
+    results = cloud_sessions.import_list(db, listing, run=fake_claude, say=lambda _: None)
+    check("--list imports only what's missing, in the checkout of the session's repository",
+          teleported == ["session_NEW1"] and results[1]["outcome"] == "imported into project 'work'")
+
+    data = json.loads(listing.read_text())
+    data["sessions"][1]["updated_at"] = "2999-01-01T00:00:00Z"
+    listing.write_text(json.dumps(data))
+    cloud_sessions.import_list(db, listing, run=fake_claude, say=lambda _: None)
+    copies = [p for p in paths.CLAUDE_CLOUD.glob("*.json") if json.loads(p.read_text())["cloud_session"] == "session_NEW1"]
+    collect.run(paths.STORE_PATH)
+    check("a session updated in the cloud is imported again into the same copy, and stays one session",
+          teleported == ["session_NEW1", "session_NEW1"] and len(copies) == 1
+          and json.loads(copies[0].read_text())["local_files"] == ["teleport-session_NEW1-1", "teleport-session_NEW1-2"]
+          and db.execute("SELECT COUNT(*) FROM events WHERE id LIKE 'claude_code:session:teleport-session_NEW1%'"
+                         ).fetchone()[0] == 1)
+
+    plain = TMP / "ids.txt"
+    plain.write_text("# my sessions\nhttps://claude.ai/code/session_PLAIN9\n")
+    check("a plain list of ids or links works too", [s["id"] for s in cloud_sessions.read_list(plain)] == ["session_PLAIN9"])
 
 
 if __name__ == "__main__":

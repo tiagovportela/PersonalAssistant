@@ -9,6 +9,10 @@ file it wrote, and keeps a copy in DATA_DIR/claude_cloud with a sidecar naming
 the repository. The Claude Code collector then indexes the copy like a local
 session, so read_claude_sessions can show it.
 
+`--list FILE` imports every listed session that's missing or was updated in the
+cloud since its import, each in my checkout of its repository. Only a cloud
+session can list my cloud sessions, so CLAUDE.md tells one how to write the file.
+
 A transcript obtained another way can be imported with --file; a cloud
 transcript's working folder (/home/user/<repo>) is matched to the allowlisted
 repository of the same name.
@@ -19,6 +23,7 @@ import os
 import re
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 import paths
@@ -102,6 +107,19 @@ def teleport(repo, session_id, run=subprocess.run):
     return max(inside or changed, key=lambda p: p.stat().st_mtime_ns)
 
 
+def imported():
+    """{cloud session id: (copy, sidecar)} for the cloud sessions already imported."""
+    found = {}
+    for path in sorted(paths.CLAUDE_CLOUD.glob("*.json")) if paths.CLAUDE_CLOUD.is_dir() else []:
+        try:
+            meta = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(meta, dict) and meta.get("cloud_session") and path.with_suffix(".jsonl").exists():
+            found[meta["cloud_session"]] = (path.with_suffix(".jsonl"), meta)
+    return found
+
+
 def import_session(db, session=None, file=None, repo=None, run=subprocess.run):
     """Copies one cloud session into DATA_DIR/claude_cloud. Returns what was imported."""
     session_id = cloud_session_id(session) if session else None
@@ -120,14 +138,108 @@ def import_session(db, session=None, file=None, repo=None, run=subprocess.run):
     if file is not None:
         repo, project = repository_for(db, repo) if repo else repository_by_name(db, meta["cwd"])
     paths.CLAUDE_CLOUD.mkdir(parents=True, exist_ok=True, mode=0o700)
-    # A teleported file keeps its name, so it stays the same session as the local file; a transcript
-    # imported with --file may have been renamed, so it's named after the session id it records.
-    name = source.stem if file is None or not re.fullmatch(r"[\w-]+", meta["session_id"] or "") else meta["session_id"]
+    earlier = imported().get(session_id) if session_id else None
+    if earlier:
+        # Imported before: keep its name, so it stays one session, and remember the new local file it came from.
+        name, local_files = earlier[0].stem, sorted(set(earlier[1].get("local_files", [])) | {source.stem})
+    else:
+        # A teleported file keeps its name, so it stays the same session as the local file; a transcript
+        # imported with --file may have been renamed, so it's named after the session id it records.
+        name = source.stem if file is None or not re.fullmatch(r"[\w-]+", meta["session_id"] or "") else meta["session_id"]
+        local_files = [source.stem] if file is None else []
     copy = paths.CLAUDE_CLOUD / f"{name}.jsonl"
     replaced = copy.exists()
     shutil.copy2(source, copy)
     copy.with_suffix(".json").write_text(json.dumps(
-        {"repo": str(repo), "cloud_session": session_id, "imported_at": store.now(), "imported_from": str(source)},
-        indent=2) + "\n", encoding="utf-8")
+        {"repo": str(repo), "cloud_session": session_id, "imported_at": store.now(), "imported_from": str(source),
+         "local_files": local_files}, indent=2) + "\n", encoding="utf-8")
     return {"session_file": name, "project": project, "repo": str(repo), "title": meta["title"],
             "prompts": meta["prompts"], "copy": str(copy), "replaced": replaced}
+
+
+# A list of cloud sessions -----------------------------------------------------
+# Only a cloud session can list my cloud sessions (CLAUDE.md says how). Its list is JSON:
+# {"sessions": [{"id", "title", "updated_at", "environment_kind", "repos": ["owner/repo"]}]};
+# a plain file with one id or claude.ai/code link per line works too.
+
+def read_list(path):
+    text = Path(path).expanduser().read_text(encoding="utf-8")
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return [{"id": cloud_session_id(line)} for line in text.splitlines() if line.strip() and not line.startswith("#")]
+    items = data.get("sessions") if isinstance(data, dict) else data
+    if not isinstance(items, list):
+        raise CollectorError(f"{path} has no list of sessions.")
+    sessions = []
+    for item in items:
+        item = {"id": item} if isinstance(item, str) else item
+        if not isinstance(item, dict) or not item.get("id"):
+            raise CollectorError(f"{path}: every session needs an id.")
+        sessions.append({**item, "id": cloud_session_id(item["id"])})
+    return sessions
+
+
+def parse_time(text):
+    try:
+        moment = datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+def state_of(session, done):
+    """missing, stale (updated in the cloud since it was imported) or current."""
+    if session["id"] not in done:
+        return "missing"
+    updated, imported_at = parse_time(session.get("updated_at")), parse_time(done[session["id"]][1].get("imported_at"))
+    return "stale" if updated and imported_at and updated > imported_at else "current"
+
+
+def checkout_for(db, repos):
+    """My allowlisted checkout of one of these GitHub repositories (owner/repo), through the project's alias."""
+    for name in repos or []:
+        name = re.sub(r"^https://github\.com/|\.git$", "", str(name)).strip("/").lower()
+        for row in db.execute(
+                "SELECT s.locator, a.project_id FROM project_aliases g"
+                " JOIN project_aliases a ON a.project_id = g.project_id AND a.kind = 'repo_path'"
+                " JOIN sources s ON s.kind = 'git_repo' AND s.locator = a.value AND s.enabled = 1"
+                " WHERE g.kind = 'github_repo' AND lower(g.value) = ?", (name,)):
+            return Path(row["locator"]), row["project_id"]
+    return None
+
+
+def import_list(db, path, repo=None, dry_run=False, run=subprocess.run, say=print):
+    """Imports every listed cloud session that's missing or out of date. Returns one result per session."""
+    done, results = imported(), []
+    for session in read_list(path):
+        label = f"{session['id']}" + (f" ({session['title']})" if session.get("title") else "")
+        result = {"id": session["id"], "state": state_of(session, done)}
+        results.append(result)
+        if session.get("environment_kind") not in (None, "anthropic_cloud"):
+            result["outcome"] = "skipped: it ran on a computer, so the Claude Code collector already has it"
+        elif result["state"] == "current":
+            result["outcome"] = "up to date"
+        elif session.get("repos"):
+            found = checkout_for(db, session["repos"])
+            if found is None:
+                result["outcome"] = f"skipped: {', '.join(session['repos'])} isn't an allowlisted repository"
+            else:
+                result["checkout"] = str(found[0])
+        else:
+            try:
+                result["checkout"] = str(repository_for(db, repo or os.getcwd())[0])
+            except CollectorError as e:
+                result["outcome"] = f"skipped: {e}"
+        if "outcome" in result or dry_run:
+            result.setdefault("outcome", f"would import ({result['state']}) in {result.get('checkout')}")
+            say(f"{label}: {result['outcome']}")
+            continue
+        say(f"{label}: {result['state']}, importing...")
+        try:
+            imported_one = import_session(db, session["id"], repo=result["checkout"], run=run)
+            result["outcome"] = f"imported into project '{imported_one['project']}'"
+        except CollectorError as e:
+            result["outcome"] = f"failed: {e}"
+        say(f"{label}: {result['outcome']}")
+    return results

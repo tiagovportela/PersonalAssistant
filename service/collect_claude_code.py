@@ -80,16 +80,18 @@ def collect(db, source, since):
         if stem in copies and db.execute("SELECT 1 FROM events WHERE id = ?", (session_event_id(stem),)).fetchone() is None:
             remove_copy(copies.pop(stem)[0])
 
+    # The local files a copy came from: the same session's name, plus any later teleport's new name.
+    copy_of = {stem: name for name, (_, meta) in copies.items() for stem in [name, *meta.get("local_files", [])]}
     local = sorted(root.glob("*/*.jsonl")) if root.is_dir() else []
     for path in local:
-        if path.stem in copies:  # the copy is what's indexed; a grown local file refreshes it
-            copy = copies[path.stem][0]
+        if path.stem in copy_of:  # the copy is what's indexed; a grown local file refreshes it
+            copy = copies[copy_of[path.stem]][0]
             try:
                 if path.stat().st_mtime_ns > copy.stat().st_mtime_ns:
                     shutil.copy2(path, copy)
             except OSError:
                 pass
-    candidates = [(p, None) for p in local if p.stem not in copies] + list(copies.values())
+    candidates = [(p, None) for p in local if p.stem not in copy_of] + list(copies.values())
     cloud_indexed = set()
     for path, meta in candidates:
         try:
