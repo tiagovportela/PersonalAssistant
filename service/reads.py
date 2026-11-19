@@ -259,19 +259,24 @@ def period_lookups(db, since, until):
     return lookups, gaps
 
 
+SEARCH_CHAT_DAYS = 30  # how far back a search reads Google Chat when no start date is given
+
+
 def search_lookups(db, text, since, until):
     """The online side of a search: the same words, through every allowed connector. Without these, Claude
     answers "when" and "what" questions from local data alone and misses documents, mail and meetings."""
     when = ("" if not (since or until) else f" on {since}" if since == until
             else f" from {since or 'the start'} to {until or 'today'}")
+    # chat_messages needs both bounds (until defaults to since), so a missing one is filled in: today for the
+    # end, and SEARCH_CHAT_DAYS before the end for the start.
+    chat_until = until or date.today().isoformat()
+    chat_since = since or (date.fromisoformat(chat_until) - timedelta(days=SEARCH_CHAT_DAYS)).isoformat()
     queries = {
         "github": f"Pull requests, issues and reviews mentioning '{text}'{when}",
         "google_calendar": f"Meetings whose title or description mentions '{text}'{when}",
         "notion": f"Pages and tasks mentioning '{text}'{when}",
         "gmail": f"Threads mentioning '{text}'{when}",
-        "google_chat": f"chat_messages with query '{text}'"
-                       + (f", since {since or until}" + (f" and until {until}" if until else "")
-                          if since or until else ", for the last 30 days"),
+        "google_chat": f"chat_messages with query '{text}', since {chat_since} and until {chat_until}",
         "google_drive": f"Documents mentioning '{text}'{when}",
     }
     allowed = [c for c in connectors(db) if c["allowed"]]
