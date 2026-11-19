@@ -94,7 +94,7 @@ def main():
                                       "clientInfo": {"name": "test_service", "version": "0"}})["result"]
             check("initialize echoes the protocol, declares tools and prompts, and says to call get_instructions",
                   init["protocolVersion"] == "2025-11-25" and {"tools", "prompts"} <= init["capabilities"].keys()
-                  and "get_instructions" in init["instructions"] and init["serverInfo"]["name"] == "pwi")
+                  and "get_instructions" in init["instructions"] and "Notion" in init["instructions"] and init["serverInfo"]["name"] == "pwi")
             send({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
             check("tools/list serves contracts/tools.py exactly", rpc("tools/list")["result"]["tools"] == TOOLS)

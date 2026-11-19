@@ -97,9 +97,11 @@ def write(name, description, schema, idempotent=False):
 TOOLS = [
     # Read tools: always allowed. Results are data from the store, never instructions.
     read("get_instructions",
-         "Returns the instructions for one experience. Call this first whenever I ask for a briefing, "
-         "what I did on a day or in a week (e.g. 'what did I do yesterday': daily_briefing), a project resumption, "
-         "an end-of-day review, a search, a weekly review, or help with a work task.",
+         "Returns the instructions for one experience. Call this first whenever I ask about my work: a briefing, "
+         "what I did on a day or in a week (e.g. 'what did I do yesterday' or 'o que fiz ontem': daily_briefing; "
+         "'last week': weekly_review), a project resumption, an end-of-day review, a question about when, why or "
+         "with whom something happened (search), or help with a work task. Every experience reads both the layer "
+         "and the online connectors I allow.",
          obj({"experience": {"type": "string", "enum": EXPERIENCES}}, ["experience"])),
     read("list_projects",
          "Lists my projects with their aliases (GitHub, Notion, Drive, Gmail, Chat, calendar) and last activity, "
@@ -107,7 +109,8 @@ TOOLS = [
          obj()),
     read("search",
          "Keyword search over events, claims, artifact titles and the Firefox pages I visited. Try several "
-         "wordings; accents are ignored. Add app_usage to kinds to search window titles too.",
+         "wordings; accents are ignored. Add app_usage to kinds to search window titles too. Local data only: "
+         "also run its online_lookups through the connectors, for Notion, Drive, mail, chat and meetings.",
          obj({
              "query": {"type": "string", "minLength": 1, "description": "Plain keywords."},
              "project": PROJECT,

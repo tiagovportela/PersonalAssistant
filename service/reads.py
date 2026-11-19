@@ -259,6 +259,25 @@ def period_lookups(db, since, until):
     return lookups, gaps
 
 
+def search_lookups(db, text, since, until):
+    """The online side of a search: the same words, through every allowed connector. Without these, Claude
+    answers "when" and "what" questions from local data alone and misses documents, mail and meetings."""
+    when = ("" if not (since or until) else f" on {since}" if since == until
+            else f" from {since or 'the start'} to {until or 'today'}")
+    queries = {
+        "github": f"Pull requests, issues and reviews mentioning '{text}'{when}",
+        "google_calendar": f"Meetings whose title or description mentions '{text}'{when}",
+        "notion": f"Pages and tasks mentioning '{text}'{when}",
+        "gmail": f"Threads mentioning '{text}'{when}",
+        "google_chat": f"chat_messages with query '{text}'"
+                       + (f", since {since or until}" + (f" and until {until}" if until else "")
+                          if since or until else ", for the last 30 days"),
+        "google_drive": f"Documents mentioning '{text}'{when}",
+    }
+    allowed = [c for c in connectors(db) if c["allowed"]]
+    return [{"connector": c["connector"], "query": queries[c["connector"]], "scope": c["scope"]} for c in allowed]
+
+
 def lookups_for(alias, branch):
     kind, value = alias["kind"], alias["value"]
     if kind == "github_repo":
@@ -565,10 +584,11 @@ def search(db, args):
 
     found.sort(key=lambda pair: pair[0])  # bm25: lower is a better match
     results = [item for _, item in found[:limit]]
-    result = {"query": args["query"], "results": results, "found": bool(results)}
+    result = {"query": args["query"], "results": results, "found": bool(results),
+              "online_lookups": search_lookups(db, args["query"], since, until)}
     if not results:
-        result["gaps"] = [f"Nothing matched '{args['query']}'. Try other wordings, in Portuguese and English, "
-                          "or a file, branch or project name."]
+        result["gaps"] = [f"Nothing matched '{args['query']}' in the local layer. Try other wordings, in Portuguese "
+                          "and English, or a file, branch or project name, and run online_lookups before saying not found."]
     return result
 
 

@@ -137,6 +137,26 @@ def main():
           {q["connector"] for q in week["online_lookups"]} == {"github", "google_calendar", "notion"}
           and all(week["week"]["from"] in q["query"] and week["week"]["to"] in q["query"]
                   for q in week["online_lookups"]))
+    found = call("search", {"query": "retry plan", "since": D1, "until": D1})
+    check("search lists the same words as online lookups, only through allowed connectors",
+          {q["connector"] for q in found["online_lookups"]} == {"github", "google_calendar", "notion"}
+          and all("'retry plan'" in q["query"] and D1 in q["query"] for q in found["online_lookups"]))
+    reply = layer.call_tool("get_day", {"day": D1})
+    step = reply["content"][-1]["text"]
+    check("a result with lookups ends with the layer's next step, outside the data, naming each connector",
+          len(reply["content"]) == 2 and step.startswith("<pwi_next_step>") and "<data" not in step
+          and all(n in step for n in ("GitHub", "Google Calendar", "Notion")) and "Gmail" not in step
+          and "acme/billing" not in step)
+    check("a result without lookups has no next step",
+          len(layer.call_tool("list_projects", {})["content"]) == 1)
+    original = handlers.MAX_CHARS
+    handlers.MAX_CHARS = 200
+    try:
+        trimmed = call("get_day", {"day": D1})
+    finally:
+        handlers.MAX_CHARS = original
+    check("trimming a long result never drops its online lookups",
+          trimmed.get("truncated") and len(trimmed["online_lookups"]) == 3)
     connectors = {q["connector"] for q in project["lookups"]}
     check("get_project turns aliases into lookups, only for allowed connectors, and says which are off",
           connectors == {"github", "notion"} and any("Gmail" in g for g in project["gaps"]))
