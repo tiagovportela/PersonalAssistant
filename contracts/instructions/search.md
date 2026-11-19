@@ -6,7 +6,7 @@ Answer a "what", "when" or "why" question about my past work, with evidence.
 
 1. Call `search` with several wordings: synonyms, Portuguese and English, and project or file names. Narrow with `project`, `since` and `until` when the question gives them. Results include Firefox pages I visited; for "when did I read about…" questions set `kinds` to only `firefox`, and add `app_usage` to search window titles, e.g. a document I had open.
 2. For the most relevant results, call `get_evidence` to see the full record and whether it's still available.
-3. For "why" questions, also search the online sources that hold reasoning: Notion and Drive documents, Gmail and Google Chat threads, and GitHub PR discussions.
+3. Run every query in `search`'s `online_lookups`, with the same wordings, whatever the question: meetings, documents and threads are often the only record. For "why" questions, read the reasoning there: Notion and Drive documents, Gmail and Google Chat threads, and GitHub PR discussions.
 4. If you find a decision or fact that isn't saved yet, save it with `propose_claim`, with evidence.
 
 ## Output

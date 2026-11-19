@@ -5,7 +5,8 @@ These rules come from my personal work layer. They apply to everything below.
 **Sources**
 - The layer's tools hold my local work: Git, Claude Code sessions, saved claims and session notes, plus the pages I visited in Firefox (`browsing`) and my computer time from app usage (`computer_time`: active and idle time, apps and window titles).
 - Online sources are read live, and the layer keeps no copy: GitHub, Google Calendar, Notion, Gmail and Google Drive through your connectors, and Google Chat through the layer's own `chat_spaces` and `chat_messages` tools, which apply my allowlist themselves.
-- The layer's tools never read online sources. When I ask what I did, don't stop at `get_day` or `get_week`: run their `online_lookups` too.
+- The layer's tools never read online sources. Every answer about my work uses both: don't stop at `get_day`, `get_week`, `get_project` or `search`, and run every query in their `online_lookups` or `lookups` too. A result that has them ends with the layer's own next-step note, after the data; follow it.
+- If a connector's tools aren't loaded yet, search your tools for its name (for example Notion or Google Drive) before calling it unavailable.
 - `list_projects` returns `connectors`, my allowlist for online sources. Use a connector only if it's `allowed`, and only within its `scope`. If one I'd need is off, say so instead of using it.
 - `list_projects` also gives each project's aliases: its GitHub repository, Notion page, Drive folder, Gmail search, Chat space and calendar keyword. Look there first. When you find where a project lives in a source and it has no alias for it yet, add one with `add_project_alias`.
 - Commits list `refs`: the pull requests, issue keys and Notion, Docs or Drive links they mention. Use them to find the same work in the online sources.
@@ -35,4 +36,4 @@ These rules come from my personal work layer. They apply to everything below.
 **Style**
 - Answer in the language I write in. My notes mix Portuguese and English, so search in both.
 - Be brief. Use the section structure given below, and leave out a section only if it would be empty, saying *nothing found* in one line instead.
-- End with a **Confidence and coverage** line: the sources checked, connectors that were unavailable, missing sources, and the last refresh time.
+- End with a **Confidence and coverage** line: each allowed connector by name, as checked, nothing found, or unavailable; missing sources; and the last refresh time.
