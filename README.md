@@ -52,7 +52,7 @@ A folder allowlists every Git repository in it, up to 4 levels down. It skips hi
 | `pwi google connect FILE`, `status`, `disconnect` | The layer's own read-only Google sign-in, for Google Chat. |
 | `pwi eod setup --vault PATH` | Turns on the end-of-day agent: the Obsidian vault, and `--folder` (Work), `--at` (19:30) and `--days` (Mon..Fri). Writes and starts its timers. |
 | `pwi eod check` | Shows which tools the agent gets: the layer's without the approval ones, connectors' read-only tools, edits only in the notes folder. `--allow TOOL` or `--block TOOL` changes one. |
-| `pwi eod run`, `finish`, `status`, `off` | Runs the agent now (`--day`, `--force`); rewrites a day's notes with my answers; shows the last runs and what's waiting; stops the timers. |
+| `pwi eod run`, `finish`, `status`, `off` | Runs the agent now (`--day`, `--force`, or `--from` and `--to` for every workday in a range, oldest first, with one Chat review at the end); rewrites a day's notes with my answers; shows the last runs and what's waiting; stops the timers. |
 | `pwi chat-app connect KEY`, `status`, `disconnect` | The layer's Google Chat app, which posts the end-of-day review to my direct message with it (`--subscription NAME`). |
 
 The service collects at login (catching up after a shutdown) and then every hour, also after the laptop wakes from sleep.

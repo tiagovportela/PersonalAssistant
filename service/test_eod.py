@@ -535,6 +535,26 @@ def main():
           and db.execute("SELECT COUNT(*) FROM review_items").fetchone()[0] > claim_count)
     check("a day that already ran isn't run again unless forced",
           eod.run(db, TODAY)["status"] == "skipped" and len(claude_calls()) == 1)
+    first_run = db.execute("SELECT MAX(id) FROM eod_runs").fetchone()[0]
+    reviews = db.execute("SELECT COUNT(*) FROM review_batches").fetchone()[0]
+    seen = []
+    ranged = eod.run_range(db, "2026-11-13", "2026-11-17", each=seen.append)
+    check("a range runs each workday oldest first, skipping the weekend, and shows each as it ends",
+          [r["day"] for r in ranged["days"]] == ["2026-11-13", "2026-11-16", "2026-11-17"] and seen == ranged["days"]
+          and [c["prompt"].count(d) > 0 for c, d in zip(claude_calls()[-3:], ("2026-11-13", "2026-11-16", "2026-11-17"))]
+          == [True, True, True])
+    check("and posts one Chat review at the end, not one per day",
+          db.execute("SELECT COUNT(*) FROM review_batches").fetchone()[0] - reviews <= 1
+          and db.execute("SELECT COUNT(*) FROM eod_runs WHERE id > ?", (first_run,)).fetchone()[0] == 3)
+    check("days that already ran are skipped in a range too",
+          [r["status"] for r in eod.run_range(db, "2026-11-13", "2026-11-13")["days"]] == ["skipped"])
+    for bad in (("2026-11-17", "2026-11-13"), ("2026-13-01", "2026-11-13"), ("2026-11-13", "2999-01-01")):
+        try:
+            eod.days_between(eod.settings(db), *bad)
+            check("a range that's backwards, not a date, or in the future is refused", False)
+        except eod.EodError:
+            pass
+    check("a range that's backwards, not a date, or in the future is refused", True)
     os.environ["FAKE_CLAUDE_FAIL"] = "1"
     failed = eod.run(db, "2026-11-20")
     del os.environ["FAKE_CLAUDE_FAIL"]
