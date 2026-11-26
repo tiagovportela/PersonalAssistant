@@ -37,7 +37,7 @@ At each run the layer starts Claude Code once just to read the tools it has, the
 
 `Edit` and `Write` are never denied outright, since a deny would override the folder rule; `--block Edit` turns note writing off, and `--allow` can't make edits allowed everywhere.
 
-The run is in `dontAsk` mode: anything not on the list is denied instead of waiting for an approval. `pwi eod check` shows the list; `--allow TOOL` and `--block TOOL` change one tool. `ANTHROPIC_API_KEY` is removed from the run's environment, because Claude Code doesn't load claude.ai connectors with one.
+The run is in `dontAsk` mode: anything not on the list is denied instead of waiting for an approval. claude.ai connectors can still be connecting when Claude Code reports its tools at startup, so their tools may be missing from that list. A `PreToolUse` hook on MCP tools (`service/eod_hook.py`) therefore decides each MCP call as it happens, by the same naming rules (`service/tool_rules.py`) and my overrides. It fails closed, and the deny list still applies on top. `pwi eod check` shows the list; `--allow TOOL` and `--block TOOL` change one tool. `ANTHROPIC_API_KEY` is removed from the run's environment, because Claude Code doesn't load claude.ai connectors with one.
 
 The finish run gets only `get_day` and `Edit` inside that day's folder.
 
