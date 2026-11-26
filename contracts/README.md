@@ -9,6 +9,7 @@
 - **Added `chat_spaces` and `chat_messages`** (Phase 2): Google Chat read live through the layer's own read-only Google sign-in, instead of a third-party server (see `docs/third_party_reviews.md`). The layer enforces the allowlist for them in code.
 - **Added `add_project_alias`** (Phase 2), so Claude can record where a project lives in an online source (GitHub, Notion, Drive, Gmail, Chat, calendar) once it finds it. It only adds; I remove aliases in the frontend.
 - **`get_evidence` also takes an `event_id`**, so Claude can open the full commit or session behind any event a read tool returned. Pass exactly one of `event_id` or `evidence_id`; the service rejects anything else.
+- **Commitments have a `counterparty`** (schema 7): who it's promised to, next to `owner`, who must do it. With both, the end-of-day agent can list what I owe each person and what each person owes me.
 - **Added `read_confidential`**, so "unless I explicitly ask" in the brief has a mechanism. Other read tools never return confidential items and have no flag to include them. A flag would let injected text in an email ask for them; an approval-gated tool can't be used without my click.
 
 ## Claude Desktop doesn't enforce schemas

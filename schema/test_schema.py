@@ -166,8 +166,11 @@ END;
 DROP TABLE connectors;
 DROP TABLE settings;
 DROP VIEW claims_for_claude;
+DROP VIEW claims_shareable;
 DROP VIEW current_claims;
 ALTER TABLE claim_versions DROP COLUMN type;
+ALTER TABLE claim_versions DROP COLUMN counterparty;
+DROP TABLE review_items; DROP TABLE review_messages; DROP TABLE review_batches; DROP TABLE eod_runs;
 UPDATE schema_version SET version = 1;
 """
 

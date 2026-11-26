@@ -75,6 +75,8 @@ CLAIM_FIELDS = {
     "about_day": {**DAY, "description": "The workday the claim is about, e.g. when a decision was made."},
     "due_at": {"type": "string", "description": "Commitments and deadlines: a date or UTC date-time."},
     "owner": {"type": "string", "description": "Commitments: 'me', or the person's email or handle."},
+    "counterparty": {"type": "string", "description": "Commitments: who it's promised to: the person's email or handle "
+                                                       "when owner is 'me', or 'me' when someone promised it to me."},
     "confidence": {"type": "number", "minimum": 0, "maximum": 1},
 }
 

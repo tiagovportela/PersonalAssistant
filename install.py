@@ -241,6 +241,11 @@ def install(use_systemd):
 
 
 def uninstall(use_systemd):
+    for timer in ("pwi-eod.timer", "pwi-eod-finish.timer"):  # the end-of-day agent's, if it was set up
+        if use_systemd and (UNIT_PATH.parent / timer).exists():
+            systemctl("disable", "--now", timer, check=False)
+    for name in ("pwi-eod.service", "pwi-eod.timer", "pwi-eod-finish.service", "pwi-eod-finish.timer"):
+        (UNIT_PATH.parent / name).unlink(missing_ok=True)
     if use_systemd and UNIT_PATH.exists():
         systemctl("disable", "--now", UNIT, check=False)
     UNIT_PATH.unlink(missing_ok=True)

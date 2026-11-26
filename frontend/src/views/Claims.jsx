@@ -37,7 +37,7 @@ function History({ claimId }) {
 }
 
 const EDITABLE_TYPES = ["decision", "commitment", "blocker", "fact"];
-const FIELDS = ["type", "text", "project", "about_day", "due_at", "owner"];
+const FIELDS = ["type", "text", "project", "about_day", "due_at", "owner", "counterparty"];
 
 // My edit becomes a new version; the old ones stay in the history.
 function ClaimEditor({ claim, projects, onSaved, onCancel }) {
@@ -84,6 +84,10 @@ function ClaimEditor({ claim, projects, onSaved, onCancel }) {
       <label>
         Owner
         <input value={form.owner} onChange={set("owner")} placeholder="me, or their email" />
+      </label>
+      <label>
+        With
+        <input value={form.counterparty} onChange={set("counterparty")} placeholder="the other person's email" />
       </label>
       <label>
         Status after saving

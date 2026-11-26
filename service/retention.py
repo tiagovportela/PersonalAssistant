@@ -77,6 +77,10 @@ def run(store_path, now=None):
             if before:
                 counts["audit_entries"] = db.execute("DELETE FROM audit_log WHERE at < ?", (before,)).rowcount
                 counts["collector_runs"] = db.execute("DELETE FROM collector_runs WHERE started_at < ?", (before,)).rowcount
+                # The end-of-day agent's records: its runs, and reviews whose claims are long answered or gone.
+                counts["agent_runs"] = db.execute("DELETE FROM eod_runs WHERE started_at < ?", (before,)).rowcount
+                counts["reviews"] = db.execute("DELETE FROM review_batches WHERE posted_at < ? AND status <> 'open'",
+                                               (before,)).rowcount
             counts["unused_evidence"] = db.execute(
                 "DELETE FROM evidence WHERE id NOT IN (SELECT evidence_id FROM claim_evidence)").rowcount
             counts["unused_references"] = db.execute(
