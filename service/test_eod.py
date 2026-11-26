@@ -720,6 +720,28 @@ def main():
     status = eod.status(db)
     check("status shows the settings, the tools and the last runs",
           status["settings"]["folder"] == "Work" and status["tools"]["allowed"] and status["runs"][0]["kind"] == "finish")
+    # runs that stopped without finishing
+    stuck = db.execute("INSERT INTO eod_runs (day, kind, started_at, status, detail) VALUES ('2026-10-05', 'run', ?,"
+                       " 'running', 'pid 999999999')", (store.now(),)).lastrowid
+    old_style = db.execute("INSERT INTO eod_runs (day, kind, started_at, status) VALUES ('2026-10-02', 'run', ?,"
+                           " 'running')", (store.now(),)).lastrowid
+    live = db.execute("INSERT INTO eod_runs (day, kind, started_at, status, detail) VALUES ('2026-10-20', 'run', ?,"
+                      " 'running', ?)", (store.now(), f"pid {os.getpid()}")).lastrowid
+    sys.argv[1:] = ["eod"]  # this test's own process passes for a pwi eod process
+    real_alive = eod.alive
+    eod.alive = lambda pid: pid == os.getpid() or real_alive(pid)
+    eod.status(db)
+    eod.alive = real_alive
+    rows = {r["id"]: r for r in db.execute("SELECT * FROM eod_runs WHERE id IN (?, ?, ?)", (stuck, old_style, live))}
+    check("runs left 'running' by Ctrl+C or a shutdown show as interrupted; one really running is left alone",
+          rows[stuck]["status"] == rows[old_style]["status"] == "failed" and "interrupted" in rows[stuck]["detail"]
+          and rows[live]["status"] == "running")
+    db.execute("UPDATE eod_runs SET status = 'ok' WHERE id = ?", (live,))
+    started = eod.begin(db, "2026-10-21", "run")
+    check("a run records its process while it runs, so it can be told apart from one that stopped",
+          db.execute("SELECT detail FROM eod_runs WHERE id = ?", (started,)).fetchone()[0] == f"pid {os.getpid()}")
+    eod.end(db, started, "ok", "test")
+
     eod.remove_units(systemd=False)
     check("off removes the timers", not any((eod.UNIT_DIR / u).exists() for u in eod.UNITS))
     check("disconnecting forgets the app's key", chat_app.disconnect() and not chat_app.connected())
