@@ -325,9 +325,28 @@ def render(name, **values):
     return text
 
 
+def alive(pid):
+    """Whether a run's process is still there: a pwi process with that id."""
+    try:
+        return b"eod" in Path(f"/proc/{pid}/cmdline").read_bytes()
+    except (OSError, ValueError):
+        return False
+
+
+def close_interrupted(db):
+    """Marks as interrupted the runs still 'running' whose process is gone: stopped with Ctrl+C, killed, or cut
+    off by a shutdown. A run that is really running (the 19:30 one during a range, say) is left alone."""
+    for r in db.execute("SELECT id, detail FROM eod_runs WHERE status = 'running'").fetchall():
+        pid = (r["detail"] or "").removeprefix("pid ")
+        if not (pid.isdigit() and alive(int(pid))):
+            db.execute("UPDATE eod_runs SET status = 'failed', finished_at = ?, detail = ? WHERE id = ?",
+                       (store.now(), "interrupted: it stopped before it finished", r["id"]))
+
+
 def begin(db, day, kind):
-    return db.execute("INSERT INTO eod_runs (day, kind, started_at, status) VALUES (?, ?, ?, 'running')",
-                      (day, kind, store.now())).lastrowid
+    close_interrupted(db)
+    return db.execute("INSERT INTO eod_runs (day, kind, started_at, status, detail) VALUES (?, ?, ?, 'running', ?)",
+                      (day, kind, store.now(), f"pid {os.getpid()}")).lastrowid
 
 
 def end(db, run_id, status, detail):
@@ -455,6 +474,7 @@ def finish(db, day=None):
 
 
 def status(db):
+    close_interrupted(db)
     s = settings(db)
     tools = json.loads(store.setting(db, "eod.tools", "{}"))
     runs = [dict(r) for r in db.execute("SELECT day, kind, started_at, status, detail FROM eod_runs ORDER BY id DESC LIMIT 5")]
