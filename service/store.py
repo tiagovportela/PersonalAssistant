@@ -8,7 +8,7 @@ from pathlib import Path
 
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schema" / "schema.sql"
 MIGRATIONS_DIR = SCHEMA_PATH.with_name("migrations")  # NNN_name.sql takes the store from version NNN-1 to NNN
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # The one way events are written: re-reading a record never duplicates it, and only
 # a real content change (a correction, a session that grew) touches the row.
@@ -33,6 +33,21 @@ def utc(ts):
 
 def now():
     return utc(datetime.now(timezone.utc).timestamp())
+
+
+def setting(db, key, default=None):
+    """One of my choices from the settings table, e.g. 'eod.vault'."""
+    row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(db, key, value):
+    """Saves a setting; None removes it."""
+    if value is None:
+        db.execute("DELETE FROM settings WHERE key = ?", (key,))
+    else:
+        db.execute("INSERT INTO settings VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value,"
+                   " changed_at = excluded.changed_at", (key, str(value), now()))
 
 
 def local_offset_min(ts):

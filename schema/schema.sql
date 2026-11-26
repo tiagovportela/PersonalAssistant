@@ -1,4 +1,4 @@
--- Personal Work Intelligence layer: SQLite schema (schema version 6).
+-- Personal Work Intelligence layer: SQLite schema (schema version 7).
 -- A store made by an older version is upgraded by the files in migrations/.
 --
 -- Times are UTC text, 'YYYY-MM-DDTHH:MM:SSZ'. Ids that come from a source are
@@ -12,7 +12,7 @@
 PRAGMA journal_mode = WAL;
 
 CREATE TABLE schema_version (version INTEGER NOT NULL) STRICT;
-INSERT INTO schema_version VALUES (6);
+INSERT INTO schema_version VALUES (7);
 
 -- Sources: each allowlisted repository, folder or profile ------------------
 
@@ -172,6 +172,7 @@ CREATE TABLE claim_versions (
     reason      TEXT,                           -- 'correction', 'confirmed in review', ...
     created_at  TEXT NOT NULL,
     type        TEXT CHECK (type IS NULL OR type IN ('decision', 'commitment', 'blocker', 'fact', 'session_note')),  -- NULL: as in claims.type
+    counterparty TEXT,                          -- commitments: who it's promised to: a colleague, or 'me'
     UNIQUE (claim_id, version),
     CHECK (status <> 'supported' OR changed_by = 'me')   -- only I can verify a claim
 ) STRICT;
@@ -198,7 +199,7 @@ CREATE TABLE claim_evidence (
 
 CREATE VIEW current_claims AS
 SELECT c.id, COALESCE(v.type, c.type) AS type, c.type AS proposed_type, c.created_at AS first_proposed_at,
-       v.version, v.status, v.text, v.project_id, v.about_day, v.due_at, v.owner,
+       v.version, v.status, v.text, v.project_id, v.about_day, v.due_at, v.owner, v.counterparty,
        v.confidence, v.method, v.changed_by, v.reason, v.created_at AS version_at, v.seq
 FROM claims c
 JOIN claim_versions v ON v.claim_id = c.id
@@ -330,6 +331,49 @@ CREATE TRIGGER artifacts_fts_update AFTER UPDATE OF title ON artifacts BEGIN
     INSERT INTO artifacts_fts (artifacts_fts, rowid, title) VALUES ('delete', OLD.seq, OLD.title);
     INSERT INTO artifacts_fts (rowid, title) VALUES (NEW.seq, NEW.title);
 END;
+
+-- The end-of-day agent ----------------------------------------------------
+
+-- Its runs, and the reviews it posts to my direct message with the layer's Chat app, kept so a
+-- click on a card can be checked against what was shown (docs/end_of_day_agent.md).
+CREATE TABLE eod_runs (
+    id          INTEGER PRIMARY KEY,
+    day         TEXT NOT NULL,                  -- the workday it's about
+    kind        TEXT NOT NULL CHECK (kind IN ('run', 'finish')),
+    started_at  TEXT NOT NULL,
+    finished_at TEXT,
+    status      TEXT NOT NULL CHECK (status IN ('running', 'ok', 'failed')),
+    detail      TEXT                            -- turns and duration, or the error; never work content
+) STRICT;
+CREATE INDEX eod_runs_by_day ON eod_runs (day, kind);
+
+CREATE TABLE review_batches (
+    id               TEXT PRIMARY KEY,          -- 'rvb_' + random
+    day              TEXT NOT NULL,
+    space            TEXT NOT NULL,             -- my direct message with the Chat app
+    posted_at        TEXT NOT NULL,
+    status           TEXT NOT NULL CHECK (status IN ('open', 'answered', 'replaced')),
+    notes_updated_at TEXT                       -- when the finish run last rewrote the day's notes
+) STRICT;
+
+CREATE TABLE review_messages (
+    name        TEXT PRIMARY KEY,               -- spaces/.../messages/...
+    batch_id    TEXT NOT NULL REFERENCES review_batches(id) ON DELETE CASCADE,
+    stale       INTEGER NOT NULL DEFAULT 0 CHECK (stale IN (0, 1))  -- its card doesn't show the latest answers yet
+) STRICT;
+
+CREATE TABLE review_items (
+    id          TEXT PRIMARY KEY,               -- 'rvi_' + random; the card's buttons carry it
+    batch_id    TEXT NOT NULL REFERENCES review_batches(id) ON DELETE CASCADE,
+    position    INTEGER NOT NULL,               -- the number shown on the card
+    claim_id    TEXT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+    version     INTEGER NOT NULL,               -- the version shown; a click applies only while it's current
+    message     TEXT REFERENCES review_messages(name) ON DELETE SET NULL,
+    answer      TEXT CHECK (answer IN ('confirmed', 'corrected', 'disputed', 'retracted', 'changed', 'moved')),
+    answered_at TEXT,
+    UNIQUE (batch_id, position)
+) STRICT;
+CREATE INDEX review_items_by_claim ON review_items (claim_id);
 
 -- Settings -----------------------------------------------------------------
 

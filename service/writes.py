@@ -20,7 +20,7 @@ from collect_git import github_repo
 from reads import LABELS, OPEN, find_project
 
 DATE_OR_TIME = re.compile(r"\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}Z)?")
-CONTENT_FIELDS = ("text", "project", "about_day", "due_at", "owner", "confidence")
+CONTENT_FIELDS = ("text", "project", "about_day", "due_at", "owner", "counterparty", "confidence")
 
 
 class Refused(Exception):
@@ -115,9 +115,10 @@ def add_version(db, claim_id, current, changes, status, changed_by, reason):
     fields.update({k: v for k, v in changes.items() if k in CONTENT_FIELDS})
     kind = changes.get("type") or (current["type"] if current else None)
     db.execute("INSERT INTO claim_versions (claim_id, version, status, type, text, project_id, about_day, due_at, owner,"
-               " confidence, method, changed_by, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+               " counterparty, confidence, method, changed_by, reason, created_at)"
+               " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                (claim_id, version, status, kind, fields["text"], fields["project"], fields["about_day"], fields["due_at"],
-                fields["owner"], fields["confidence"], changes.get("method") or (current["method"] if current else "claude"),
+                fields["owner"], fields["counterparty"], fields["confidence"], changes.get("method") or (current["method"] if current else "claude"),
                 changed_by, reason, store.now()))
     return version
 
@@ -187,7 +188,8 @@ def update_claim(db, args):
         if "text" in changes:
             changes["text"] = changes["text"].strip()
         old = {"text": claim["text"], "project": claim["project_id"], "about_day": claim["about_day"],
-               "due_at": claim["due_at"], "owner": claim["owner"], "confidence": claim["confidence"]}
+               "due_at": claim["due_at"], "owner": claim["owner"], "counterparty": claim["counterparty"],
+               "confidence": claim["confidence"]}
         changed = {k: v for k, v in changes.items() if old[k] != v}
         extra = new_items(db, claim["id"], claim["version"], args.get("add_evidence", []))
         if not changed and not extra:

@@ -24,6 +24,18 @@ frontend exists. install.py puts a `pwi` launcher in ~/.local/bin.
     pwi google connect F   sign the layer in to Google, read-only, with the OAuth client file F
     pwi google status      who the layer is signed in as
     pwi google disconnect  revoke the layer's Google sign-in and forget it
+    pwi chat-app connect KEY  connect the layer's Google Chat app (its service account key), which posts
+                           the end-of-day review to my direct message with it; --subscription NAME
+    pwi chat-app status    whether it's connected, and where the review goes
+    pwi chat-app disconnect  forget the app's key
+    pwi eod setup --vault PATH  turn on the end-of-day agent: the Obsidian vault, --folder (Work),
+                           --at (19:30) and --days (Mon..Fri); starts its timers
+    pwi eod check          which tools the agent gets: the layer's, connectors' read-only tools, the notes folder
+                           (--allow TOOL or --block TOOL to change one)
+    pwi eod run [--day D]  run the agent now (the timer runs it by itself); --force runs a day again
+    pwi eod finish [--day D]  rewrite the day's notes with my answers from the Chat review
+    pwi eod status         settings, last runs, and what's waiting in the review
+    pwi eod off            stop the timers
 """
 
 import sys
@@ -44,8 +56,10 @@ import webbrowser  # noqa: E402
 from contextlib import closing  # noqa: E402
 
 import app_usage  # noqa: E402
+import chat_app  # noqa: E402
 import cloud_sessions  # noqa: E402
 import collect  # noqa: E402
+import eod  # noqa: E402
 import evaluation  # noqa: E402
 import gnome_extension  # noqa: E402
 import google_signin as google  # noqa: E402
@@ -182,6 +196,102 @@ def google_command(args):
     return 0
 
 
+def chat_app_command(args):
+    os.umask(0o077)
+    try:
+        if args.step == "connect":
+            done = chat_app.connect(args.key_json, args.subscription)
+            print(f"Connected the Chat app as {done['client_email']}, reading {done['subscription']}. "
+                  f"Its key is kept in {done['stored_in']}; you can delete {args.key_json} now.")
+            print("In Google Chat, open a direct message with the app: the layer records it and posts the review there.")
+            if not google.status()["connected"]:
+                print("Also sign in with: pwi google connect CLIENT_JSON. The layer needs to know who you are, "
+                      "so that only your clicks count.")
+        elif args.step == "status":
+            if not chat_app.connected():
+                print("The Chat app isn't connected. Run: pwi chat-app connect KEY_JSON")
+                return 0
+            key = chat_app.load()
+            print(f"Connected as {key['client_email']}, reading {key['subscription']}.")
+            store.create_or_check(paths.STORE_PATH)
+            with closing(store.connect(paths.STORE_PATH)) as db:
+                space = store.setting(db, "chat_app.space")
+                print(f"Review goes to your direct message {space}." if space else
+                      "No direct message yet: in Google Chat, open a direct message with the app.")
+                for name, text in (("chat_app.last_event_at", "Last event"), ("chat_app.last_error", "Last error")):
+                    value = store.setting(db, name)
+                    if value:
+                        print(f"{text}: {value}")
+        else:
+            print("The app's key is forgotten. Delete the key in Google Cloud too (IAM & Admin, Service accounts)."
+                  if chat_app.disconnect() else "The Chat app wasn't connected.")
+    except (google.GoogleError, OSError, ValueError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def eod_command(db, args):
+    try:
+        if args.step == "setup":
+            done = eod.setup(db, args.vault, args.folder, args.at, args.days, args.claude,
+                             systemd=os.environ.get("PWI_NO_SYSTEMD") != "1")
+            print(f"The end-of-day agent runs at {done['at']} ({done['days']}) and writes to {done['notes']}.")
+            if not done["is_vault"]:
+                print(f"  {done['vault']} has no .obsidian folder: is it your vault? Open it in Obsidian once.")
+            print("  Next: pwi eod check, to see which tools it gets.")
+            if not chat_app.connected():
+                print("  The review goes to Google Chat once the app is connected: pwi chat-app connect KEY_JSON")
+        elif args.step == "check":
+            done = eod.check(db, args.allow or (), args.block or ())
+            print("Connected: " + ", ".join(f"{m['name']} ({m['status']})" for m in done["servers"]))
+            if not done["pwi_connected"]:
+                print("  The layer isn't connected: is the service running? systemctl --user status pwi")
+            print(f"Allowed ({len(done['allowed'])}): " + ", ".join(done["allowed"]))
+            print(f"Denied ({len(done['blocked'])}): " + ", ".join(done["blocked"]))
+            print("Edits: only inside the notes folder. Change a tool with --allow NAME or --block NAME.")
+        elif args.step == "run":
+            done = eod.run(db, args.day, args.force)
+            print(f"{done['day']}: {done['status']}. {done['detail']}")
+            posted = done.get("review") or {}
+            if posted.get("posted"):
+                print(f"  {posted['posted']} claims posted to Google Chat.")
+            return 1 if done["status"] == "failed" else 0
+        elif args.step == "finish":
+            results = eod.finish(db, args.day)
+            for r in results:
+                print(f"{r['day']}: {r['status']}" + (f". {r['detail']}" if r.get("detail") else ""))
+            if not results:
+                print("No answers since the notes were last written.")
+            return 1 if any(r["status"] == "failed" for r in results) else 0
+        elif args.step == "off":
+            eod.remove_units(systemd=os.environ.get("PWI_NO_SYSTEMD") != "1")
+            print("The end-of-day timers are stopped and removed. Your notes and settings stay; "
+                  "pwi eod setup turns it back on.")
+        else:
+            s = eod.status(db)
+            cfg = s["settings"]
+            if not cfg["vault"]:
+                print("The end-of-day agent is off. Turn it on with: pwi eod setup --vault PATH")
+                return 0
+            print(f"Runs at {cfg['at']} ({cfg['days']}), timers {'on' if s['timers'] else 'off'}; "
+                  f"notes in {cfg['vault']}/{cfg['folder']}.")
+            tools = s["tools"]
+            if tools:
+                print(f"Tools (checked {tools['checked_at']}): {len(tools['allowed'])} allowed, "
+                      f"{len(tools['blocked'])} denied.")
+            print("Chat review: " + ("waiting for a direct message with the app" if s["chat_app"] and not s["review_space"]
+                                     else f"{s['waiting']} claims waiting" if s["chat_app"] else "the app isn't connected"))
+            if s["chat_app_error"]:
+                print(f"  Last Chat app error: {s['chat_app_error']}")
+            for r in s["runs"]:
+                print(f"  {r['day']} {r['kind']:<6} {r['status']:<7} {r['started_at']}  {r['detail'] or ''}")
+    except eod.EodError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(prog="pwi", description="Personal Work Intelligence layer")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -222,9 +332,35 @@ def main():
         "client_json", help="the OAuth client file (Desktop app) from your Google Cloud project")
     signin.add_parser("status", help="who the layer is signed in as")
     signin.add_parser("disconnect", help="revoke the sign-in and forget it")
+    app = commands.add_parser("chat-app", help="the layer's Google Chat app, for the end-of-day review").add_subparsers(
+        dest="step", required=True)
+    connect = app.add_parser("connect", help="connect it with its service account key")
+    connect.add_argument("key_json", help="the service account's JSON key, from your Google Cloud project")
+    connect.add_argument("--subscription", default=chat_app.DEFAULT_SUBSCRIPTION,
+                         help=f"the Pub/Sub subscription for its events (default: {chat_app.DEFAULT_SUBSCRIPTION})")
+    app.add_parser("status", help="whether it's connected, and where the review goes")
+    app.add_parser("disconnect", help="forget its key")
+    agent = commands.add_parser("eod", help="the end-of-day agent").add_subparsers(dest="step", required=True)
+    setup = agent.add_parser("setup", help="turn it on: where the notes go, and when it runs")
+    setup.add_argument("--vault", required=True, help="your Obsidian vault's folder")
+    setup.add_argument("--folder", default="Work", help="the folder inside the vault for its notes (default: Work)")
+    setup.add_argument("--at", default="19:30", help="when it runs, HH:MM (default: 19:30)")
+    setup.add_argument("--days", default="Mon..Fri", help="which days, e.g. Mon..Fri (the default) or Mon,Wed,Fri")
+    setup.add_argument("--claude", help="the claude command, if it isn't on PATH")
+    checking = agent.add_parser("check", help="which tools it gets")
+    checking.add_argument("--allow", action="append", metavar="TOOL", help="allow this tool too")
+    checking.add_argument("--block", action="append", metavar="TOOL", help="deny this tool")
+    running = agent.add_parser("run", help="run it now")
+    running.add_argument("--day", help="the workday, YYYY-MM-DD (default: today, or the last workday before noon)")
+    running.add_argument("--force", action="store_true", help="run again for a day that already ran")
+    agent.add_parser("finish", help="rewrite the day's notes with my answers").add_argument("--day", help="YYYY-MM-DD")
+    agent.add_parser("status", help="settings, last runs and the review")
+    agent.add_parser("off", help="stop the timers")
     args = parser.parse_args()
     if args.command == "google":
         return google_command(args)
+    if args.command == "chat-app":
+        return chat_app_command(args)
     if args.command == "open":
         return open_frontend(args.section)
 
@@ -250,6 +386,8 @@ def main():
                 print_runs(collect.run(paths.STORE_PATH, "manual"))
             elif args.command == "app-usage":
                 return app_usage_command(db, args)
+            elif args.command == "eod":
+                return eod_command(db, args)
             elif args.command == "sources":
                 for s in sources.list_sources(db):
                     state = "on " if s["enabled"] else "off"

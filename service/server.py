@@ -25,9 +25,11 @@ from contextlib import closing  # noqa: E402
 
 import app_usage  # noqa: E402
 import collect  # noqa: E402
+import eod  # noqa: E402
 import idle  # noqa: E402
 import paths  # noqa: E402
 import retention  # noqa: E402
+import review  # noqa: E402
 import store  # noqa: E402
 from handlers import VERSION, Layer, RpcError  # noqa: E402
 from web import Frontend  # noqa: E402
@@ -149,6 +151,8 @@ async def main():
     frontend.start()
     sampler = app_usage.Sampler(paths.STORE_PATH)
     sampler.start()
+    listener = review.Listener(paths.STORE_PATH, on_answered=eod.start_finish)
+    listener.start()
     try:
         await stop.wait()
     finally:
@@ -156,6 +160,7 @@ async def main():
         collecting.cancel()
         frontend.stop()
         await asyncio.to_thread(sampler.stop)  # writes the span still open
+        await asyncio.to_thread(listener.stop)
         server.close()
         for writer in list(clients):  # the bridges reconnect on their own once we're back
             writer.close()

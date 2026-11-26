@@ -50,35 +50,49 @@ def keyring_available():
     return os.environ.get("PWI_SECRET_STORE") != "file" and shutil.which("secret-tool") is not None
 
 
-def save_token(record):
+def store_secret(attributes, label, record, file):
+    """Keeps a secret in GNOME Keyring under these attributes, or, without secret-tool, in an owner-only file.
+    Returns where it went."""
     data = json.dumps(record)
     if keyring_available():
-        done = subprocess.run(["secret-tool", "store", "--label=Work layer Google sign-in", *KEYRING],
+        done = subprocess.run(["secret-tool", "store", f"--label={label}", *attributes],
                               input=data, capture_output=True, text=True, timeout=TIMEOUT)
         if done.returncode == 0:
-            TOKEN_FILE.unlink(missing_ok=True)
+            file.unlink(missing_ok=True)
             return "GNOME Keyring"
     paths.DATA_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-    fd = os.open(TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd = os.open(file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         f.write(data)
-    return str(TOKEN_FILE)
+    return str(file)
 
 
-def load_token():
+def lookup_secret(attributes, file):
     if keyring_available():
-        found = subprocess.run(["secret-tool", "lookup", *KEYRING], capture_output=True, text=True, timeout=TIMEOUT)
+        found = subprocess.run(["secret-tool", "lookup", *attributes], capture_output=True, text=True, timeout=TIMEOUT)
         if found.returncode == 0 and found.stdout.strip():
             return json.loads(found.stdout)
-    if TOKEN_FILE.exists():
-        return json.loads(TOKEN_FILE.read_text())
+    if file.exists():
+        return json.loads(file.read_text())
     return None
 
 
-def forget_token():
+def clear_secret(attributes, file):
     if keyring_available():
-        subprocess.run(["secret-tool", "clear", *KEYRING], capture_output=True, timeout=TIMEOUT)
-    TOKEN_FILE.unlink(missing_ok=True)
+        subprocess.run(["secret-tool", "clear", *attributes], capture_output=True, timeout=TIMEOUT)
+    file.unlink(missing_ok=True)
+
+
+def save_token(record):
+    return store_secret(KEYRING, "Work layer Google sign-in", record, TOKEN_FILE)
+
+
+def load_token():
+    return lookup_secret(KEYRING, TOKEN_FILE)
+
+
+def forget_token():
+    clear_secret(KEYRING, TOKEN_FILE)
 
 
 def client():

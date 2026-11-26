@@ -280,7 +280,8 @@ def claims(db, status=None, project=None, query=None, limit=200):
     rows = db.execute(f"{sql} {'WHERE ' + ' AND '.join(where) if where else ''} ORDER BY c.version_at DESC LIMIT ?",
                       (*params, min(int(limit), 1000))).fetchall()
     return [{"claim_id": c["id"], "type": c["type"], "text": c["text"], "status": c["status"], "project": c["project_id"],
-             "about_day": c["about_day"], "due_at": c["due_at"], "owner": c["owner"], "version": c["version"],
+             "about_day": c["about_day"], "due_at": c["due_at"], "owner": c["owner"],
+             "counterparty": c["counterparty"], "version": c["version"],
              "changed_at": c["version_at"],
              "changed_by": c["changed_by"],
              "evidence": db.execute("SELECT COUNT(*) FROM claim_evidence WHERE claim_id = ? AND version = ?",
@@ -291,12 +292,12 @@ def claims(db, status=None, project=None, query=None, limit=200):
 
 CLAIM_TYPES = ("decision", "commitment", "blocker", "fact")
 CLAIM_STATUSES = ("proposed", "supported", "disputed", "retracted", "superseded")
-EDITABLE = ("type", "text", "project", "about_day", "due_at", "owner")
+EDITABLE = ("type", "text", "project", "about_day", "due_at", "owner", "counterparty")
 
 
 def edit_claim(db, claim_id, changes):
     """My change to a claim: a new version recorded as mine, with the evidence carried over; old versions stay.
-    When I change what it says (type, text, project, day, due date, owner), the new version is verified
+    When I change what it says (type, text, project, day, due date, owner, counterparty), the new version is verified
     unless I pick another status, since I wrote it. A session note keeps its type."""
     claim = db.execute("SELECT * FROM current_claims WHERE id = ?", (claim_id,)).fetchone()
     if claim is None:
@@ -304,7 +305,7 @@ def edit_claim(db, claim_id, changes):
     if not isinstance(changes, dict):
         raise Invalid("Send the fields to change.")
     old = {"type": claim["type"], "text": claim["text"], "project": claim["project_id"], "about_day": claim["about_day"],
-           "due_at": claim["due_at"], "owner": claim["owner"]}
+           "due_at": claim["due_at"], "owner": claim["owner"], "counterparty": claim["counterparty"]}
     new = dict(old)
     for key in EDITABLE:
         if key in changes:
@@ -355,7 +356,7 @@ def claim_history(db, claim_id):
             " LEFT JOIN events e ON e.id = ev.event_id LEFT JOIN artifacts a ON a.id = ev.artifact_id"
             " WHERE ce.claim_id = ? AND ce.version = ? ORDER BY ev.id", (claim_id, v["version"])).fetchall()
         out.append({k: v[k] for k in ("version", "status", "text", "project_id", "about_day", "due_at", "owner",
-                                      "changed_by", "reason", "created_at")}
+                                      "counterparty", "changed_by", "reason", "created_at")}
                    | {"type": v["current_type"], "evidence": [dict(e) for e in evidence]})
     return {"claim_id": claim_id, "versions": out}
 
@@ -422,10 +423,11 @@ def delete(db, items, decisions):
             elif decision == "retract":
                 c = db.execute("SELECT * FROM current_claims WHERE id = ?", (claim_id,)).fetchone()
                 if c["status"] != "retracted":
-                    db.execute("INSERT INTO claim_versions (claim_id, version, status, text, project_id, about_day,"
-                               " due_at, owner, confidence, method, changed_by, reason, created_at) SELECT claim_id,"
-                               " version + 1, 'retracted', text, project_id, about_day, due_at, owner, confidence, method,"
-                               " 'me', 'evidence deleted', ? FROM claim_versions WHERE claim_id = ? AND version = ?",
+                    db.execute("INSERT INTO claim_versions (claim_id, version, status, type, text, project_id, about_day,"
+                               " due_at, owner, counterparty, confidence, method, changed_by, reason, created_at) SELECT"
+                               " claim_id, version + 1, 'retracted', type, text, project_id, about_day, due_at, owner,"
+                               " counterparty, confidence, method, 'me', 'evidence deleted', ? FROM claim_versions"
+                               " WHERE claim_id = ? AND version = ?",
                                (store.now(), claim_id, c["version"]))
                     db.execute("INSERT INTO claim_evidence SELECT claim_id, version + 1, evidence_id FROM claim_evidence"
                                " WHERE claim_id = ? AND version = ?", (claim_id, c["version"]))

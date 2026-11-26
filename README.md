@@ -50,6 +50,10 @@ A folder allowlists every Git repository in it, up to 4 levels down. It skips hi
 | `pwi open [SECTION]` | Opens the frontend in your browser, e.g. `pwi open confidential`. |
 | `pwi eval label [DAY]`, `pwi eval report` | The 5-day evaluation, below. |
 | `pwi google connect FILE`, `status`, `disconnect` | The layer's own read-only Google sign-in, for Google Chat. |
+| `pwi eod setup --vault PATH` | Turns on the end-of-day agent: the Obsidian vault, and `--folder` (Work), `--at` (19:30) and `--days` (Mon..Fri). Writes and starts its timers. |
+| `pwi eod check` | Shows which tools the agent gets: the layer's without the approval ones, connectors' read-only tools, edits only in the notes folder. `--allow TOOL` or `--block TOOL` changes one. |
+| `pwi eod run`, `finish`, `status`, `off` | Runs the agent now (`--day`, `--force`); rewrites a day's notes with my answers; shows the last runs and what's waiting; stops the timers. |
+| `pwi chat-app connect KEY`, `status`, `disconnect` | The layer's Google Chat app, which posts the end-of-day review to my direct message with it (`--subscription NAME`). |
 
 The service collects at login (catching up after a shutdown) and then every hour, also after the laptop wakes from sleep.
 
@@ -73,12 +77,23 @@ Claude sees browsing and computer time as summaries (in `get_day`, `get_week` an
 
 **Logs:** `journalctl --user -u pwi -f`. **Status:** `systemctl --user status pwi`.
 
+## End-of-day agent
+
+At 19:30 on workdays, a timer runs Claude Code by itself in my Obsidian vault. It reads my day through the layer and the connectors I allow, writes the missing session notes, saves decisions, commitments (with who they're promised to), blockers and facts as unconfirmed claims, and writes the day's notes: an executive summary and one note per project, linked to hub notes for projects, people and sources, with nested tags for Obsidian's graph. Then the layer posts the claims to my direct message with its Google Chat app, as cards with Confirm, Save correction, Dispute and Retract. Only my clicks count, checked by the layer itself, and each is recorded as my change. Once I've answered them all, Claude rewrites the day's notes with my answers.
+
+Claude gets an exact tool list: the layer's tools without the approval ones, connector tools that only read, and edits only inside the notes folder. Nothing it runs can send, share or change anything online. The design, what it changes in the brief, and the Google Cloud setup for the Chat app are in [`docs/end_of_day_agent.md`](docs/end_of_day_agent.md); the agent's instructions and the notes layout in [`contracts/agent/`](contracts/agent).
+
+```bash
+pwi eod setup --vault ~/Obsidian/MyVault   # then: pwi eod check, and a first pwi eod run
+pwi chat-app connect ~/Downloads/key.json  # then open a direct message with the app in Google Chat
+```
+
 ## Google Chat
 
 The layer reads Google Chat itself, live and never stored, with your own Google account and read-only access only: if Google ever granted it more, the sign-in is refused and revoked. It reads only the spaces you allow: those named in Google Chat's scope on the Online sources page, or linked to a project as a Chat alias (an empty scope means every space), and never a confidential project's spaces. Claude gets two tools for it, `chat_spaces` and `chat_messages`.
 
 To set it up, once:
-1. In a Google Cloud project (your company's, if your admin prefers): enable the **Google Chat API**, and fill in its **Configuration** page with an app name, avatar and description; Google requires that even for reading. Leave interactive features off.
+1. In a Google Cloud project (your company's, if your admin prefers): enable the **Google Chat API**, and fill in its **Configuration** page with an app name, avatar and description; Google requires that even for reading. Leave interactive features off, unless you set up the end-of-day agent's Chat app (see its setup in `docs/end_of_day_agent.md`); the sign-in stays read-only either way.
 2. **OAuth consent screen:** user type *Internal*, with the scopes `chat.spaces.readonly`, `chat.messages.readonly` and `chat.memberships.readonly`.
 3. **Credentials:** create an OAuth client ID of type **Desktop app**, and download its JSON file.
 4. On the laptop: `sudo apt install libsecret-tools` (so the sign-in is kept in GNOME Keyring), then `pwi google connect ~/Downloads/client_secret_….json`. Your browser opens Google's consent page.
@@ -131,14 +146,16 @@ Reviews of the third-party code the brief needs (the GNOME Focused Window extens
 | `pwi` command | `~/.local/bin/pwi` |
 | Installed code | `~/.local/share/pwi/app` (`version.json` says which commit) |
 | Socket the bridge connects to | `$XDG_RUNTIME_DIR/pwi/mcp.sock` (owner-only) |
-| systemd unit | `~/.config/systemd/user/pwi.service` |
+| systemd units | `~/.config/systemd/user/pwi.service`, and the end-of-day agent's `pwi-eod.*` and `pwi-eod-finish.*` |
+| End-of-day notes | the vault's notes folder you chose, e.g. `~/Obsidian/MyVault/Work` |
+| Chat app key | GNOME Keyring (`secret-tool`), or `~/.local/share/pwi/chat_app.json` without it |
 
 ## Repository
 
 | Folder | Contents |
 |---|---|
-| [`service/`](service) | The background service (`server.py`), the bridge Claude Desktop starts (`bridge.py`), the `pwi` CLI (`cli.py`), the collectors (`collect_*.py`), app usage and its GNOME extension installer (`app_usage.py`, `gnome_extension.py`), contradiction detection (`contradictions.py`), the read tools (`reads.py`), the write tools (`writes.py`), retention (`retention.py`), the frontend's web server and admin actions (`web.py`, `admin.py`), the evaluation (`evaluation.py`), secret redaction, the store setup and the MCP handlers. |
-| [`contracts/`](contracts) | The MCP tool contracts, validation and the six experiences' instructions. |
+| [`service/`](service) | The background service (`server.py`), the bridge Claude Desktop starts (`bridge.py`), the `pwi` CLI (`cli.py`), the collectors (`collect_*.py`), app usage and its GNOME extension installer (`app_usage.py`, `gnome_extension.py`), contradiction detection (`contradictions.py`), the read tools (`reads.py`), the write tools (`writes.py`), retention (`retention.py`), the frontend's web server and admin actions (`web.py`, `admin.py`), the evaluation (`evaluation.py`), the end-of-day agent's runner and Chat review (`eod.py`, `review.py`, `chat_app.py`), secret redaction, the store setup and the MCP handlers. |
+| [`contracts/`](contracts) | The MCP tool contracts, validation, the six experiences' instructions, and the end-of-day agent's instructions in `agent/`. |
 | [`schema/`](schema) | The SQLite schema, and `migrations/` that upgrade an older store. |
 | [`frontend/`](frontend) | The React frontend. `dist/` is the built app the service serves, committed so the laptop never needs Node.js. |
 | [`third_party/`](third_party) | The reviewed GNOME extension, unchanged from upstream at the reviewed commit; installed only after a checksum check. |
@@ -150,7 +167,7 @@ Reviews of the third-party code the brief needs (the GNOME Focused Window extens
 Each test uses temporary folders and never touches an installed layer. Run them on both Python versions before pushing:
 
 ```bash
-for t in schema/test_schema.py contracts/test_tools.py contracts/test_experiences.py service/test_service.py service/test_collectors.py service/test_reads.py service/test_writes.py service/test_privacy.py service/test_web.py service/test_evaluation.py service/test_online.py service/test_google_chat.py service/test_activity.py test_install.py; do
+for t in schema/test_schema.py contracts/test_tools.py contracts/test_experiences.py service/test_service.py service/test_collectors.py service/test_reads.py service/test_writes.py service/test_privacy.py service/test_web.py service/test_evaluation.py service/test_online.py service/test_google_chat.py service/test_activity.py service/test_eod.py test_install.py; do
   python3 -I "$t" || break
 done
 ```
@@ -167,4 +184,4 @@ To test on Python 3.14 on the dev PC, use `uv python install 3.14` and run the s
 
 ## Status
 
-Phases 1, 2 and 4 are built; Phase 3 (meetings) is on hold. All 20 tools work, with validation. The service collects Git, Claude Code sessions, Firefox history and app usage, saves claims and session notes, points out possible contradictions, applies retention once a day, and serves the local frontend. Claude uses Gmail, Drive and Notion within the allowlist you set, and Google Chat through the layer's own read-only sign-in, saves commitments and decisions from them with the message or document as evidence, and links projects to where they live online. `get_metrics` reports freshness, ingestion lag, project linking, claims by type, false commitments, project corrections, missed deadlines, contradictions and app usage's overhead. Next: the 5-day evaluation on real workdays (`pwi eval`).
+Phases 1, 2 and 4 are built; Phase 3 (meetings) is on hold. All 20 tools work, with validation. The service collects Git, Claude Code sessions, Firefox history and app usage, saves claims and session notes, points out possible contradictions, applies retention once a day, and serves the local frontend. Claude uses Gmail, Drive and Notion within the allowlist you set, and Google Chat through the layer's own read-only sign-in, saves commitments and decisions from them with the message or document as evidence, and links projects to where they live online. `get_metrics` reports freshness, ingestion lag, project linking, claims by type, false commitments, project corrections, missed deadlines, contradictions and app usage's overhead. The end-of-day agent (`pwi eod`) runs Claude Code by itself at 19:30, writes the day into Obsidian and asks me to confirm its claims in Google Chat. Next: the 5-day evaluation on real workdays (`pwi eval`), and a first real run of the agent and its Chat review.

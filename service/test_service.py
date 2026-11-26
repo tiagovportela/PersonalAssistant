@@ -19,7 +19,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "contracts"))
+sys.path.insert(0, str(HERE))
 from experiences import instructions  # noqa: E402
+from store import SCHEMA_VERSION  # noqa: E402
 from tools import TOOLS  # noqa: E402
 
 NOW = "2026-11-02T17:00:00Z"
@@ -87,7 +89,7 @@ def main():
                   sock.stat().st_mode & 0o777 == 0o600 and sock.parent.stat().st_mode & 0o777 == 0o700)
             check("the store is created owner-only, at the current schema version",
                   db_path.stat().st_mode & 0o777 == 0o600 and db_path.parent.stat().st_mode & 0o777 == 0o700
-                  and sqlite3.connect(db_path).execute("select version from schema_version").fetchone() == (6,))
+                  and sqlite3.connect(db_path).execute("select version from schema_version").fetchone() == (SCHEMA_VERSION,))
             check("bridge connects once the service is up", rpc("ping").get("result") == {})
 
             init = rpc("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},

@@ -395,8 +395,9 @@ def test_contradictions(db, call):
     add_claim(db, "clm_a2", "decision", "We won't use Redis for the session cache in billing")
     add_claim(db, "clm_b1", "decision", "Keep the nightly export job for finance reports")
     add_claim(db, "clm_b2", "decision", "Remove the nightly export job for finance reports")
-    add_claim(db, "clm_c1", "commitment", "Send the invoice migration plan to Ana", due_at="2026-11-06", owner="me")
-    add_claim(db, "clm_c2", "commitment", "Send the invoice migration plan to Ana", due_at="2026-11-13", owner="me")
+    first_due, second_due = (TODAY + timedelta(days=30)).isoformat(), (TODAY + timedelta(days=37)).isoformat()
+    add_claim(db, "clm_c1", "commitment", "Send the invoice migration plan to Ana", due_at=first_due, owner="me")
+    add_claim(db, "clm_c2", "commitment", "Send the invoice migration plan to Ana", due_at=second_due, owner="me")
     add_claim(db, "clm_d1", "fact", "Release 2.3 ships the CSV export to customers")
     add_claim(db, "clm_d2", "fact", "Release 2.4 ships the CSV export to customers")
     add_claim(db, "clm_e1", "decision", "Use GitHub Actions for the deploy pipeline")
@@ -408,7 +409,7 @@ def test_contradictions(db, call):
     check("negation, opposite words, different due dates and different numbers are found",
           pairs.get(frozenset({"clm_a1", "clm_a2"})) == ["one is negated and the other isn't"]
           and "opposite words" in pairs.get(frozenset({"clm_b1", "clm_b2"}), [""])[0]
-          and pairs.get(frozenset({"clm_c1", "clm_c2"})) == ["different due dates (2026-11-06 / 2026-11-13)"]
+          and pairs.get(frozenset({"clm_c1", "clm_c2"})) == [f"different due dates ({first_due} / {second_due})"]
           and "2.3" in pairs.get(frozenset({"clm_d1", "clm_d2"}), [""])[0])
     check("claims that only add detail, are about other things, or belong to other projects aren't flagged",
           total == 4 and frozenset({"clm_e1", "clm_e2"}) not in pairs

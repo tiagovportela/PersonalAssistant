@@ -160,7 +160,7 @@ def evidence_list(db, claim_id, version):
 def claim_item(db, c, today=None):
     item = {"claim_id": c["id"], "type": c["type"], "text": c["text"], "label": LABELS[c["status"]],
             "project": c["project_id"], "version": c["version"]}
-    for key in ("about_day", "due_at", "owner", "confidence"):
+    for key in ("about_day", "due_at", "owner", "counterparty", "confidence"):
         if c[key] is not None:
             item[key] = c[key]
     if today:
@@ -900,7 +900,7 @@ def get_metrics(db, args):
         "project_matching": {"claims_with_project": with_project, "project_corrected": project_corrected,
                              "accuracy": round(1 - project_corrected / with_project, 2) if with_project else None},
         "missed_deadlines": {"count": len(overdue),
-                             "commitments": [{k: c.get(k) for k in ("claim_id", "text", "due_at", "owner", "label")}
+                             "commitments": [{k: c.get(k) for k in ("claim_id", "text", "due_at", "owner", "counterparty", "label")}
                                              for c in overdue[:10]]},
         "contradictions": {"possible": conflict_count, "disputed_claims": disputed[1],
                            "oldest_disputed_days": (date.today() - date.fromisoformat(disputed[0][:10])).days
