@@ -36,7 +36,7 @@ import collect
 import paths
 import review
 import store
-from tools import APPROVAL
+from tool_rules import FILE_EDITS, classify, reads_only, words  # noqa: F401  (used by tests and check)
 
 HERE = Path(__file__).resolve().parent
 AGENT = HERE.parent / "contracts" / "agent"
@@ -49,18 +49,6 @@ FINISH_TIMEOUT = 15 * 60
 CHECK_TIMEOUT = 120
 DAYS = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
 
-# Words in a tool's name. Allowed: at least one reading word and no changing word; anything else is denied.
-READING = {"get", "list", "search", "read", "fetch", "find", "query", "view", "download", "lookup", "describe",
-           "retrieve"}
-CHANGING = {"create", "update", "delete", "remove", "trash", "send", "post", "share", "copy", "move", "duplicate",
-            "merge", "push", "write", "edit", "add", "set", "insert", "upload", "append", "request", "assign",
-            "archive", "fork", "run", "trigger", "enable", "disable", "resolve", "unresolve", "submit", "reply",
-            "approve", "close", "reopen", "rename", "publish", "import", "invite", "schedule", "cancel", "patch",
-            "put", "replace", "modify", "save", "mark", "subscribe", "unsubscribe", "accept", "decline", "respond",
-            "rsvp", "complete", "execute", "apply", "restore", "transfer", "lock", "unlock", "pin", "unpin",
-            "invoke", "start", "stop", "deploy", "release", "draft", "comment", "react", "forward", "revoke"}
-SAFE_BUILTINS = {"Read", "Glob", "Grep", "LS", "TodoWrite", "ToolSearch", "ListMcpResourcesTool", "ReadMcpResourceTool"}
-FILE_EDITS = {"Edit", "Write", "MultiEdit"}
 
 
 class EodError(Exception):
@@ -176,43 +164,6 @@ def start_finish(day=None):
 
 # Which tools Claude gets ------------------------------------------------------------------
 
-def words(name):
-    name = re.sub(r"(?i)(pull|merge)[_-]?requests?", "pr", name)  # a noun, not a request to do something
-    return {w.lower() for w in re.split(r"[^A-Za-z0-9]+|(?<=[a-z])(?=[A-Z])", name) if w}
-
-
-def reads_only(name):
-    found = words(name)
-    return bool(found & READING) and not found & CHANGING
-
-
-def classify(names, overrides=None):
-    """(allowed, blocked) tool names: the layer's tools without the approval ones, connectors' tools that only
-    read, and the built-in tools that only read. My overrides come last.
-
-    The file-editing tools are in neither list: a run allows them through its Edit rule, inside the notes folder
-    only, and a deny would override that rule. They're denied only if I block one, and never allowed everywhere."""
-    overrides = overrides or {}
-    allowed, blocked = [], []
-    for name in sorted(set(names)):
-        if name in FILE_EDITS:
-            if name in overrides.get("block", []):
-                blocked.append(name)
-            continue
-        if name.startswith("mcp__pwi__"):
-            ok = name.removeprefix("mcp__pwi__") not in APPROVAL
-        elif name.startswith("mcp__"):
-            ok = reads_only(name.removeprefix("mcp__").split("__", 1)[-1])
-        else:
-            ok = name in SAFE_BUILTINS
-        if name in overrides.get("allow", []):
-            ok = True
-        if name in overrides.get("block", []):
-            ok = False
-        (allowed if ok else blocked).append(name)
-    return allowed, blocked
-
-
 def bridge_config():
     installed = paths.APP_DIR / "service" / "bridge.py"
     bridge = installed if installed.exists() else HERE / "bridge.py"
@@ -302,18 +253,36 @@ def edit_rule(folder):
     return f"Edit(/{Path(folder).resolve()}/**)"
 
 
-def claude_argv(s, allowed, blocked, edits_in):
+def hook_settings(overrides):
+    """Claude Code settings with a PreToolUse hook on MCP tools. The allow list is built from the tools Claude Code
+    reports at startup, when claude.ai connectors may still be connecting, so their tools aren't on it and dontAsk
+    would deny them. The hook decides each MCP call as it happens, by the same rules and my overrides. It fails
+    closed: if it can't decide, it denies. Deny rules (--disallowedTools) still apply on top."""
+    installed = paths.APP_DIR / "service" / "eod_hook.py"
+    hook = installed if installed.exists() else HERE / "eod_hook.py"
+    paths.RUNTIME_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    policy = paths.RUNTIME_DIR / "eod-policy.json"
+    policy.write_text(json.dumps({"overrides": overrides or {}}))
+    path = paths.RUNTIME_DIR / "eod-settings.json"
+    command = f'"{sys.executable}" -I "{hook}" "{policy}"'
+    path.write_text(json.dumps({"hooks": {"PreToolUse": [
+        {"matcher": "mcp__.*", "hooks": [{"type": "command", "command": command, "timeout": 10}]}]}}))
+    return path
+
+
+def claude_argv(s, allowed, blocked, edits_in, hook=False):
     return [s["claude"], "-p", "--output-format", "json", "--permission-mode", "dontAsk",
             "--mcp-config", str(bridge_config()),
+            *(["--settings", str(hook_settings(s["overrides"]))] if hook else []),
             "--allowedTools", *allowed, edit_rule(edits_in),
             "--disallowedTools", *sorted(set(blocked) | {"Bash", "WebFetch", "WebSearch", "NotebookEdit", "Task", "Agent"})]
 
 
-def ask_claude(s, prompt, allowed, blocked, cwd, edits_in, timeout):
+def ask_claude(s, prompt, allowed, blocked, cwd, edits_in, timeout, hook=False):
     """Runs Claude once, headless. Returns Claude Code's result: is_error, num_turns, duration_ms, result,
     permission_denials."""
     try:
-        done = subprocess.run(claude_argv(s, allowed, blocked, edits_in), input=prompt, capture_output=True, text=True,
+        done = subprocess.run(claude_argv(s, allowed, blocked, edits_in, hook), input=prompt, capture_output=True, text=True,
                               cwd=cwd, env=child_env(s["claude"]), timeout=timeout)
     except subprocess.TimeoutExpired:
         raise EodError(f"Claude didn't finish within {timeout // 60} minutes and was stopped.") from None
@@ -386,7 +355,8 @@ def run(db, day=None, force=False, post=True):
                         review="the Chat app is connected" if connected and review.review_space(db) else
                         "the Chat app isn't set up yet, so they wait for the review in Claude Desktop")
         prompt += "\n\n---\n\n" + COMMON.read_text(encoding="utf-8")
-        result = ask_claude(s, prompt, tools["allowed"], tools["blocked"], folder, folder, RUN_TIMEOUT)
+        result = ask_claude(s, prompt, tools["allowed"], tools["blocked"], folder, folder, RUN_TIMEOUT,
+                            hook=True)
         detail = run_detail(result)
     except EodError as e:
         status, detail = "failed", str(e)

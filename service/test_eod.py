@@ -13,9 +13,11 @@ import json
 import logging
 import os
 import secrets
+import shlex
 import shutil
 import sqlite3
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -525,6 +527,27 @@ def main():
           and "mcp__claude_ai_Google_Drive__share_file" in denied_tools and "Bash" in denied_tools
           and "Edit" not in allowed_tools and f"Edit(/{notes}/**)" in allowed_tools
           and not {"Edit", "Write", "MultiEdit"} & set(denied_tools))
+    hooks = json.loads(Path(argv[argv.index("--settings") + 1]).read_text())["hooks"]["PreToolUse"]
+    command = hooks[0]["hooks"][0]["command"]
+    check("the run has a PreToolUse hook on MCP tools, so connectors that load late are judged when called",
+          hooks[0]["matcher"] == "mcp__.*" and "eod_hook.py" in command)
+
+    def hook_says(tool, policy=None):
+        if policy is not None:
+            Path(command.rsplit('"', 2)[-2]).write_text(policy)
+        done = subprocess.run(shlex.split(command), input=json.dumps({"tool_name": tool, "tool_input": {}}),
+                              capture_output=True, text=True, timeout=20)
+        return json.loads(done.stdout)["hookSpecificOutput"]["permissionDecision"]
+
+    check("the hook allows a connector's read tools that weren't on the startup list, and denies the rest",
+          hook_says("mcp__claude_ai_Gmail__search_threads") == "allow"
+          and hook_says("mcp__claude_ai_Google_Calendar__list_events") == "allow"
+          and hook_says("mcp__claude_ai_Gmail__create_label") == "deny"
+          and hook_says("mcp__claude_ai_Gmail__send_message") == "deny"
+          and hook_says("mcp__pwi__set_claim_status") == "deny" and hook_says("mcp__pwi__get_day") == "allow")
+    check("the hook applies my overrides, and denies if it can't decide",
+          hook_says("mcp__claude_ai_Gmail__search_threads", json.dumps({"overrides": {"block": ["mcp__claude_ai_Gmail__search_threads"]}})) == "deny"
+          and hook_says("mcp__claude_ai_Gmail__get_thread", "not json") == "deny")
     check("an API key in the environment doesn't reach Claude Code, so it uses my claude.ai account and connectors",
           call["api_key"] is False)
     check("the prompt is the agent's instructions for the day, with the shared rules",
@@ -574,6 +597,7 @@ def main():
           {"day": TODAY, "status": "ok"} in results and "after my review" in call["prompt"]
           and f"{promise}  confirmed  Send the VAT notes to Ana by Friday" in call["prompt"]
           and allowed_tools == ["mcp__pwi__get_day", f"Edit(/{notes / 'Daily' / TODAY}/**)"]
+          and "--settings" not in argv
           and (notes / "Daily" / TODAY / f"{TODAY} Executive summary.md").read_text() == "run\nfinish\n")
     check("once rewritten, there's nothing more to do for that day", TODAY not in eod.days_to_finish(db))
 
