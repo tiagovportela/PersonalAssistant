@@ -2,12 +2,14 @@
 -- A commitment records who it's promised to (counterparty), next to who owes it (owner).
 -- The agent's runs, and the reviews it posts to my direct message with the layer's Chat app,
 -- are kept so a click on a card can be checked against what was shown. The views are
--- recreated to read the counterparty. store.py runs this in one transaction and backs the
+-- recreated to read the counterparty, and claims_shareable holds the
+-- confidential filter for both Claude and the review's cards. store.py runs this in one transaction and backs the
 -- store up first.
 
 ALTER TABLE claim_versions ADD COLUMN counterparty TEXT;
 
 DROP VIEW IF EXISTS claims_for_claude;
+DROP VIEW IF EXISTS claims_shareable;
 DROP VIEW IF EXISTS current_claims;
 
 CREATE VIEW current_claims AS
@@ -18,9 +20,11 @@ FROM claims c
 JOIN claim_versions v ON v.claim_id = c.id
 WHERE v.version = (SELECT MAX(version) FROM claim_versions WHERE claim_id = c.id);
 
-CREATE VIEW claims_for_claude AS
+-- Claims with the confidential ones left out, whatever their status: what the layer may show outside the
+-- store, such as the end-of-day review's cards in Google Chat, where a retracted claim still shows as retracted.
+CREATE VIEW claims_shareable AS
 SELECT cc.* FROM current_claims cc
-WHERE cc.status <> 'retracted'
+WHERE 1
   AND NOT EXISTS (SELECT 1 FROM labels l WHERE
           (l.item_type = 'claim'   AND l.item_id = cc.id) OR
           (l.item_type = 'project' AND l.item_id = cc.project_id))
@@ -29,6 +33,9 @@ WHERE cc.status <> 'retracted'
                     AND (ev.event_id IN (SELECT id FROM confidential_events)
                          OR EXISTS (SELECT 1 FROM labels l
                                     WHERE l.item_type = 'artifact' AND l.item_id = ev.artifact_id)));
+
+CREATE VIEW claims_for_claude AS
+SELECT * FROM claims_shareable WHERE status <> 'retracted';
 
 CREATE TABLE eod_runs (
     id          INTEGER PRIMARY KEY,
@@ -63,8 +70,9 @@ CREATE TABLE review_items (
     claim_id    TEXT NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
     version     INTEGER NOT NULL,               -- the version shown; a click applies only while it's current
     message     TEXT REFERENCES review_messages(name) ON DELETE SET NULL,
-    answer      TEXT CHECK (answer IN ('confirmed', 'corrected', 'disputed', 'retracted', 'changed', 'moved')),
+    answer      TEXT CHECK (answer IN ('confirmed', 'corrected', 'disputed', 'retracted', 'changed', 'moved', 'hidden')),
     answered_at TEXT,
+    noted       INTEGER NOT NULL DEFAULT 0 CHECK (noted IN (0, 1)),  -- the day's notes were rewritten with this answer
     UNIQUE (batch_id, position)
 ) STRICT;
 CREATE INDEX review_items_by_claim ON review_items (claim_id);

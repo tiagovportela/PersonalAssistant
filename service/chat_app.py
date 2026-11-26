@@ -219,8 +219,8 @@ class App:
         return call("PATCH", f"{CHAT_API}/{name}?updateMask={mask}", self.token(), body)
 
     def pull(self, wait=True, timeout=30, most=20):
-        """Events waiting in the subscription, as (ack id, event). With wait, Pub/Sub holds the request
-        open until one arrives, so a click reaches the layer in about a second; a quiet spell just
+        """Events waiting in the subscription, as (ack id, event, message id). With wait, Pub/Sub holds the
+        request open until one arrives, so a click reaches the layer in about a second; a quiet spell just
         ends the request."""
         url = f"{PUBSUB_API}/{self.key()['subscription']}:pull"
         try:
@@ -234,7 +234,7 @@ class App:
                 event = json.loads(base64.b64decode(received["message"].get("data", "")) or b"{}")
             except (ValueError, KeyError):
                 event = {}
-            events.append((received["ackId"], event))
+            events.append((received["ackId"], event, received["message"].get("messageId") or received["ackId"]))
         return events
 
     def ack(self, ack_ids):

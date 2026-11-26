@@ -10,9 +10,11 @@ Run: python3 -I service/test_eod.py
 import base64
 import hashlib
 import json
+import logging
 import os
 import secrets
 import shutil
+import sqlite3
 import stat
 import sys
 import tempfile
@@ -136,7 +138,9 @@ class FakeGoogle(BaseHTTPRequestHandler):
             if url.path.endswith(":pull"):
                 events, s["queue"] = s["queue"], []
                 return self.reply(200, {"receivedMessages": [
-                    {"ackId": f"ack-{i}-{secrets.token_hex(2)}", "message": {"data": base64.b64encode(json.dumps(e).encode()).decode()}}
+                    {"ackId": f"ack-{i}-{secrets.token_hex(2)}",
+                     "message": {"data": base64.b64encode(json.dumps(e).encode()).decode(),
+                                 "messageId": hashlib.sha256(json.dumps(e, sort_keys=True).encode()).hexdigest()[:12]}}
                     for i, e in enumerate(events)]})
             s["acks"] += json.loads(raw)["ackIds"]
             return self.reply(200, {})
@@ -197,6 +201,8 @@ import json, os, re, sys, time
 args = sys.argv[1:]
 mode = args[args.index("--output-format") + 1]
 if mode == "stream-json":
+    if os.environ.get("FAKE_CLAUDE_HANG"):
+        time.sleep(30)
     tools = ["Task", "Bash", "Glob", "Grep", "Read", "Edit", "Write", "WebFetch", "WebSearch", "TodoWrite", "ToolSearch",
              "mcp__pwi__get_day", "mcp__pwi__list_unconfirmed", "mcp__pwi__propose_claim", "mcp__pwi__save_session_note",
              "mcp__pwi__set_claim_status", "mcp__pwi__read_confidential", "mcp__pwi__add_confidential_label",
@@ -276,6 +282,7 @@ def all_text(message):
 
 
 def main():
+    logging.disable(logging.CRITICAL)  # the failure tests log on purpose
     os.umask(0o077)
     store.create_or_check(paths.STORE_PATH)
     db = store.connect(paths.STORE_PATH)
@@ -466,8 +473,12 @@ def main():
           set(allowed) == {"mcp__pwi__get_day", "mcp__pwi__propose_claim", "mcp__claude_ai_Notion__notion-search",
                            "mcp__claude_ai_Notion__notion-get-comments", "mcp__claude_ai_Google_Drive__download_file_content",
                            "mcp__claude_ai_GitHub__pull_request_read", "mcp__claude_ai_GitHub__get_label", "Read", "Grep"})
+    check("Edit and Write are in neither list: a deny would override the run's rule that allows them in the notes folder",
+          not {"Edit", "Write"} & set(allowed) and not {"Edit", "Write"} & set(blocked))
     check("an override changes one tool", eod.classify(["Artifact", "Read"], {"allow": ["Artifact"], "block": ["Read"]})
           == (["Artifact"], ["Read"]))
+    check("blocking Edit denies it, and allowing it never allows edits everywhere",
+          eod.classify(["Edit", "Write"], {"allow": ["Write"], "block": ["Edit"]}) == ([], ["Edit"]))
 
     # setting up
     vault = TMP / "My Vault"
@@ -512,7 +523,8 @@ def main():
           and "mcp__claude_ai_Google_Calendar__find_free_time" in allowed_tools
           and "mcp__pwi__set_claim_status" in denied_tools and "mcp__claude_ai_Gmail__send_message" in denied_tools
           and "mcp__claude_ai_Google_Drive__share_file" in denied_tools and "Bash" in denied_tools
-          and "Edit" not in allowed_tools and f"Edit(/{notes}/**)" in allowed_tools)
+          and "Edit" not in allowed_tools and f"Edit(/{notes}/**)" in allowed_tools
+          and not {"Edit", "Write", "MultiEdit"} & set(denied_tools))
     check("an API key in the environment doesn't reach Claude Code, so it uses my claude.ai account and connectors",
           call["api_key"] is False)
     check("the prompt is the agent's instructions for the day, with the shared rules",
@@ -544,6 +556,122 @@ def main():
           and allowed_tools == ["mcp__pwi__get_day", f"Edit(/{notes / 'Daily' / TODAY}/**)"]
           and (notes / "Daily" / TODAY / f"{TODAY} Executive summary.md").read_text() == "run\nfinish\n")
     check("once rewritten, there's nothing more to do for that day", TODAY not in eod.days_to_finish(db))
+
+    # confidential since posting: nothing more of it leaves the store
+    day2 = "2030-02-04"
+    secret, plain = propose(db, "Acquisition talks with Contoso", about_day=day2), propose(db, "Moved the standup", about_day=day2)
+    review.post_batch(db, app, day2)
+    secret_item = item_of(db, secret)
+    db.execute("INSERT INTO labels VALUES ('claim', ?, 'confidential', 'me', ?)", (secret, store.now()))
+    before = len(FakeGoogle.state["updates"])
+    review.refresh(db, app)
+    redrawn = [u for u in FakeGoogle.state["updates"][before:] if u[0] == secret_item["message"]]
+    check("a claim labelled confidential after posting is hidden at the next pass: its card is redrawn without it",
+          item_of(db, secret)["answer"] == "hidden" and redrawn and "Contoso" not in all_text(redrawn[-1][2])
+          and "Moved the standup" in all_text(redrawn[-1][2]))
+    check("and an old click on it changes nothing",
+          review.handle(db, app, click(secret_item), mine).endswith("hidden") and current(db, secret)["status"] == "proposed")
+    fixed = item_of(db, plain)
+    review.handle(db, app, click(fixed, "correct", text="Moved the standup to 9:30"), mine, on_answered)
+    writes.update_claim(db, {"claim_id": plain, "text": "Standup moved, by Claude later", "reason": "newer"})
+    db.execute("UPDATE review_messages SET stale = 1 WHERE name = ?", (fixed["message"],))
+    review.refresh(db, app)
+    check("a corrected claim's card shows my correction, not a version that came after it",
+          "Moved the standup to 9:30" in all_text(FakeGoogle.state["updates"][-1][2])
+          and "by Claude later" not in all_text(FakeGoogle.state["updates"][-1][2]))
+    (notes / "Daily" / day2).mkdir(parents=True)
+    eod.finish(db, day2)
+    prompt = claude_calls()[-1]["prompt"]
+    check("the rewrite's prompt names a claim that's confidential now by its id only",
+          f"{secret}  hidden  (now confidential: remove its line)" in prompt and "Contoso" not in prompt)
+
+    # an answer that comes in while the notes are being rewritten
+    day3 = "2030-02-05"
+    first3, second3 = propose(db, "Fact A", about_day=day3), propose(db, "Fact B", about_day=day3)
+    review.post_batch(db, app, day3)
+    review.handle(db, app, click(item_of(db, first3)), mine)
+    (notes / "Daily" / day3).mkdir(parents=True)
+    real_ask = eod.ask_claude
+
+    def answered_meanwhile(*args, **kwargs):
+        review.handle(db, app, click(item_of(db, second3)), mine)
+        return real_ask(*args, **kwargs)
+
+    eod.ask_claude = answered_meanwhile
+    eod.finish(db, day3)
+    eod.ask_claude = real_ask
+    check("an answer that came in during the rewrite isn't counted as in the notes: the day stays due",
+          day3 in eod.days_to_finish(db) and "Fact B" not in claude_calls()[-1]["prompt"])
+    eod.finish(db)
+    check("and the next rewrite takes it", day3 not in eod.days_to_finish(db) and "Fact B" in claude_calls()[-1]["prompt"])
+
+    # finishing a review is retried until it works
+    day4 = "2030-02-06"
+    last = propose(db, "Fact C", about_day=day4)
+    review.post_batch(db, app, day4)
+    batch4 = db.execute("SELECT * FROM review_batches WHERE day = ?", (day4,)).fetchone()
+    for row in db.execute("SELECT * FROM review_items WHERE batch_id = ? AND claim_id <> ?", (batch4["id"], last)).fetchall():
+        review.handle(db, app, click(row), mine, on_answered)  # everything else first, so this click is the last
+    calls_before = len(answered_days)
+    FakeGoogle.state["fail_posts"] = True
+    try:
+        review.handle(db, app, click(item_of(db, last)), mine, on_answered)
+        check("a failed wrap-up post is reported", False)
+    except chat_app.AppError:
+        pass
+    FakeGoogle.state["fail_posts"] = False
+    batch4 = db.execute("SELECT * FROM review_batches WHERE day = ?", (day4,)).fetchone()
+    check("if the closing post fails, the review stays open, its answer kept, and the rewrite isn't started yet",
+          batch4["status"] == "open" and current(db, last)["status"] == "supported" and len(answered_days) == calls_before)
+    review.settle(db, app, on_answered)
+    review.settle(db, app, on_answered)
+    done_posts = [m for m in FakeGoogle.state["posts"] if m.get("clientAssignedMessageId") == review.message_id(batch4["id"], "done")]
+    check("the listener's next pass finishes it once: one closing message, and the rewrite starts",
+          len(done_posts) == 1 and answered_days[calls_before:] == [day4]
+          and db.execute("SELECT status FROM review_batches WHERE id = ?", (batch4["id"],)).fetchone()[0] == "answered")
+
+    # events are acknowledged only once handled
+    day5 = "2030-02-07"
+    flaky = propose(db, "Fact D", about_day=day5)
+    review.post_batch(db, app, day5)
+    flaky_click = click(item_of(db, flaky))
+    real_handle, failures = review.handle, {"left": 1}
+
+    def locked_once(db_, app_, event_, *rest):
+        if event_ is not None and event_.get("type") == "CARD_CLICKED" and failures["left"]:
+            failures["left"] -= 1
+            raise sqlite3.OperationalError("database is locked")
+        return real_handle(db_, app_, event_, *rest)
+
+    review.handle = locked_once
+    listener = review.Listener(paths.STORE_PATH, wait=1)
+    acks = len(FakeGoogle.state["acks"])
+    FakeGoogle.state["queue"] = [flaky_click, event("MESSAGE", message={"name": "x", "text": "?"})]
+    handled = listener.once(app)
+    check("an event that failed isn't acknowledged, so Pub/Sub delivers it again; the others are",
+          handled == 1 and len(FakeGoogle.state["acks"]) - acks == 1 and current(db, flaky)["status"] == "proposed")
+    FakeGoogle.state["queue"] = [flaky_click]
+    check("delivered again, the click is applied", listener.once(app) == 1 and current(db, flaky)["status"] == "supported")
+    failures["left"] = 99
+    poison = event("CARD_CLICKED", message={"name": "nowhere"}, common={"invokedFunction": "confirm", "parameters": {"item": "x"}})
+    for _ in range(review.MAX_TRIES):
+        FakeGoogle.state["queue"] = [poison]
+        listener.once(app)
+    review.handle = real_handle
+    check("an event that keeps failing is dropped after a few tries, not delivered forever",
+          len(FakeGoogle.state["acks"]) - acks == 3 and not listener.tries)
+
+    # discovery has a deadline
+    os.environ["FAKE_CLAUDE_HANG"] = "1"
+    eod.CHECK_TIMEOUT = 2
+    started = datetime.now()
+    try:
+        eod.check(db)
+        check("a Claude Code that never starts is stopped at the deadline", False)
+    except eod.EodError as e:
+        check("a Claude Code that never starts is stopped at the deadline, and says so",
+              "within 2 seconds" in str(e) and (datetime.now() - started).total_seconds() < 15)
+    del os.environ["FAKE_CLAUDE_HANG"]
 
     status = eod.status(db)
     check("status shows the settings, the tools and the last runs",

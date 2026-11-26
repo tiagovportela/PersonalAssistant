@@ -166,6 +166,7 @@ END;
 DROP TABLE connectors;
 DROP TABLE settings;
 DROP VIEW claims_for_claude;
+DROP VIEW claims_shareable;
 DROP VIEW current_claims;
 ALTER TABLE claim_versions DROP COLUMN type;
 ALTER TABLE claim_versions DROP COLUMN counterparty;

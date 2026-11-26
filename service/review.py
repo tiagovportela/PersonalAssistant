@@ -29,6 +29,7 @@ from reads import claims as open_claims, evidence_list
 log = logging.getLogger("pwi")
 PER_CARD = 5  # claims per card message, as the chat review shows them 5 at a time
 MOST = 30  # claims per review; the rest follow once these are answered
+MAX_TRIES = 5  # attempts at an event that keeps failing, before it's dropped
 TYPE_NAMES = {"decision": "Decision", "commitment": "Commitment", "blocker": "Blocker", "fact": "Fact"}
 LABELS = {"proposed": "unconfirmed", "disputed": "disputed"}
 ACTIONS = {  # button -> (answer, new status, reason recorded on the version)
@@ -39,7 +40,8 @@ ACTIONS = {  # button -> (answer, new status, reason recorded on the version)
 }
 ANSWERS = {"confirmed": "✅ Confirmed", "corrected": "✏️ Corrected", "disputed": "❓ Disputed",
            "retracted": "❌ Retracted", "changed": "↻ Changed since this card was posted; it's in the next review",
-           "moved": "→ Moved to a newer review"}
+           "moved": "→ Moved to a newer review",
+           "hidden": "Marked confidential since this card was posted, so it isn't shown here any more"}
 
 
 def day_label(day):
@@ -102,10 +104,19 @@ def button(text, function, item_id):
     return {"text": text, "onClick": {"action": {"function": function, "parameters": [{"key": "item", "value": item_id}]}}}
 
 
+def shareable(db, claim_id):
+    """The claim's current version, unless it's confidential now (a label on it, its project or its evidence)."""
+    return db.execute("SELECT * FROM claims_shareable WHERE id = ?", (claim_id,)).fetchone()
+
+
 def section(db, item, today):
-    claim = db.execute("SELECT * FROM current_claims WHERE id = ?", (item["claim_id"],)).fetchone()
-    if claim is None:  # deleted in the frontend since
-        return {"header": f"{item['position']}", "widgets": [{"textParagraph": {"text": "<i>Deleted.</i>"}}]}
+    """One claim on a card. Every redraw goes through the confidential filter, so a claim labelled confidential
+    after it was posted loses its text and buttons at the next redraw."""
+    claim = shareable(db, item["claim_id"])
+    if claim is None:
+        gone = db.execute("SELECT 1 FROM current_claims WHERE id = ?", (item["claim_id"],)).fetchone() is None
+        return {"header": str(item["position"]),
+                "widgets": [{"textParagraph": {"text": "<i>Deleted.</i>" if gone else f"<i>{ANSWERS['hidden']}.</i>"}}]}
     project = db.execute("SELECT name FROM projects WHERE id = ?", (claim["project_id"],)).fetchone()
     shown = db.execute("SELECT * FROM claim_versions WHERE claim_id = ? AND version = ?",
                        (item["claim_id"], item["version"])).fetchone() or claim
@@ -117,7 +128,10 @@ def section(db, item, today):
         head.append(f"from {day_label(about)}")
     widgets = []
     if item["answer"]:
-        text = esc(claim["text"] if item["answer"] == "corrected" else shown["text"])
+        if item["answer"] == "corrected":  # the version my correction made, not whatever came after it
+            shown = db.execute("SELECT * FROM claim_versions WHERE claim_id = ? AND version = ?",
+                               (item["claim_id"], item["version"] + 1)).fetchone() or shown
+        text = esc(shown["text"])
         widgets.append({"textParagraph": {"text": f"<s>{text}</s>" if item["answer"] == "retracted" else text}})
         widgets.append({"textParagraph": {"text": f"<b>{ANSWERS[item['answer']]}</b> {local_time(item['answered_at'])}"}})
         return {"header": " · ".join(head), "widgets": widgets}
@@ -165,7 +179,7 @@ def post_text(app, space, text, mid=None):
     return app.post(space, {"text": text}, mid)
 
 
-def post_batch(db, app, day, continuation=False):
+def post_batch(db, app, day, continuation=False, keep=None):
     """Posts the claims waiting for confirmation to my DM with the app. Returns what was posted."""
     space = review_space(db)
     if not space:
@@ -182,7 +196,7 @@ def post_batch(db, app, day, continuation=False):
     batch_id = "rvb_" + secrets.token_hex(6)
 
     def create():
-        old = [r["id"] for r in db.execute("SELECT id FROM review_batches WHERE status = 'open'")]
+        old = [r["id"] for r in db.execute("SELECT id FROM review_batches WHERE status = 'open'") if r["id"] != keep]
         for old_id in old:
             db.execute("UPDATE review_messages SET stale = 1 WHERE batch_id = ? AND name IN"
                        " (SELECT message FROM review_items WHERE batch_id = ? AND answer IS NULL)", (old_id, old_id))
@@ -234,7 +248,12 @@ def post_once(db, app, batch, body, mid):
 
 def refresh(db, app):
     """Posts what isn't posted yet (after a post that failed: the header, then the cards) and redraws the
-    cards whose answers changed."""
+    cards whose answers changed. A claim labelled confidential since it was posted is marked hidden first, so its
+    card is redrawn without it and it never holds up the end of the review."""
+    for item in db.execute("SELECT i.* FROM review_items i JOIN review_batches b ON b.id = i.batch_id"
+                           " WHERE b.status = 'open' AND i.answer IS NULL"
+                           " AND i.claim_id NOT IN (SELECT id FROM claims_shareable)").fetchall():
+        mark(db, item, "hidden")
     for batch in db.execute("SELECT * FROM review_batches WHERE status = 'open'").fetchall():
         has_header = db.execute("SELECT 1 FROM review_messages m WHERE m.batch_id = ? AND NOT EXISTS"
                                 " (SELECT 1 FROM review_items i WHERE i.message = m.name)", (batch["id"],)).fetchone()
@@ -295,6 +314,10 @@ def apply(db, item, action, text=None):
         fresh = db.execute("SELECT * FROM review_items WHERE id = ?", (item["id"],)).fetchone()
         if fresh is None or fresh["answer"]:
             return fresh["answer"] if fresh else None  # a click Google Chat delivered twice
+        if shareable(db, item["claim_id"]) is None and db.execute(
+                "SELECT status FROM current_claims WHERE id = ?", (item["claim_id"],)).fetchone() is not None:
+            mark(db, fresh, "hidden")  # labelled confidential since the card was posted
+            return "hidden"
         claim = db.execute("SELECT * FROM current_claims WHERE id = ?", (item["claim_id"],)).fetchone()
         if claim is None or claim["version"] != item["version"] or claim["status"] not in ("proposed", "disputed"):
             mark(db, fresh, "changed")
@@ -321,21 +344,45 @@ def summary(db, day):
     return ", ".join(parts) or "nothing answered"
 
 
+def post_quietly(app, space, text, mid):
+    """A message posted once: a retry after Google already took it answers 409, which means done."""
+    try:
+        app.post(space, {"text": text}, mid)
+    except chat_app.AppError as e:
+        if "409" not in str(e):
+            raise
+
+
 def finished(db, app, batch_id, on_answered):
-    """When every item is answered: post what's next, or wrap up and let the notes be rewritten."""
+    """When every item of a review is answered: post the next claims, or say what I answered and start the notes
+    rewrite. The review is marked answered only once that worked: if a post fails, the review stays open and the
+    listener's next pass (settle) does it again, and the posts carry custom ids, so a retry never posts twice."""
     batch = db.execute("SELECT * FROM review_batches WHERE id = ?", (batch_id,)).fetchone()
     left = db.execute("SELECT COUNT(*) FROM review_items WHERE batch_id = ? AND answer IS NULL", (batch_id,)).fetchone()[0]
-    if left or batch["status"] != "open":
+    if batch is None or left or batch["status"] != "open":
         return False
-    db.execute("UPDATE review_batches SET status = 'answered' WHERE id = ?", (batch_id,))
-    more = post_batch(db, app, batch["day"], continuation=True)
-    if more.get("posted"):
-        return False
-    post_text(app, batch["space"], f"Done for {day_label(batch['day'])}: {summary(db, batch['day'])}. "
-                                   "Updating the day's notes in Obsidian with your answers.")
-    if on_answered:
-        on_answered(batch["day"])
-    return True
+    done = False
+    continued = db.execute("SELECT 1 FROM review_batches WHERE day = ? AND id <> ? AND status = 'open'",
+                           (batch["day"], batch_id)).fetchone()  # made by an earlier try whose posts failed
+    if not continued:
+        more = post_batch(db, app, batch["day"], continuation=True, keep=batch_id)
+        if not more.get("posted"):
+            post_quietly(app, batch["space"], f"Done for {day_label(batch['day'])}: {summary(db, batch['day'])}. "
+                                              "Updating the day's notes in Obsidian with your answers.",
+                         message_id(batch_id, "done"))
+            if on_answered:
+                on_answered(batch["day"])
+            done = True
+    db.execute("UPDATE review_batches SET status = 'answered' WHERE id = ? AND status = 'open'", (batch_id,))
+    return done
+
+
+def settle(db, app, on_answered):
+    """Finishes the reviews whose items are all answered but weren't finished: a post failed, or the last
+    open items were hidden."""
+    for batch in db.execute("SELECT id FROM review_batches b WHERE status = 'open' AND NOT EXISTS"
+                            " (SELECT 1 FROM review_items i WHERE i.batch_id = b.id AND i.answer IS NULL)").fetchall():
+        finished(db, app, batch["id"], on_answered)
 
 
 def handle(db, app, event, mine, on_answered=None):
@@ -399,6 +446,7 @@ class Listener:
         self.stopping = threading.Event()
         self.thread = None
         self.last_error = None
+        self.tries = {}  # Pub/Sub message id -> failed attempts
 
     def start(self):
         self.thread = threading.Thread(target=self.run, name="chat-app", daemon=True)
@@ -445,18 +493,30 @@ class Listener:
     def once(self, app):
         with closing(store.connect(self.store_path)) as db:
             refresh(db, app)
+            settle(db, app, self.on_answered)
         events = app.pull(wait=True, timeout=self.wait)
         if not events:
             return 0
         mine = me()
+        handled = []
         with closing(store.connect(self.store_path)) as db:
-            for _, event in events:
+            for ack, event, message in events:
                 try:
                     log.info("chat app: %s", handle(db, app, event, mine, self.on_answered))
-                except chat_app.AppError as e:
-                    self.failed(e)
-                except Exception:
-                    log.exception("chat app event")
+                    handled.append(ack)
+                    self.tries.pop(message, None)
+                except Exception as e:
+                    # Not acknowledged, so Pub/Sub delivers it again: handling is idempotent, and a click whose
+                    # answer wasn't saved (a locked store, Google unreachable) gets another chance.
+                    tries = self.tries[message] = self.tries.get(message, 0) + 1
+                    if tries >= MAX_TRIES:
+                        log.error("chat app: dropping an event that failed %d times: %s", tries, e)
+                        handled.append(ack)
+                        self.tries.pop(message, None)
+                    elif isinstance(e, chat_app.AppError):
+                        self.failed(e)
+                    else:
+                        log.exception("chat app event")
             store.set_setting(db, "chat_app.last_event_at", store.now())
-        app.ack([ack for ack, _ in events])
-        return len(events)
+        app.ack(handled)
+        return len(handled)

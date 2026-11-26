@@ -35,6 +35,8 @@ At each run the layer starts Claude Code once just to read the tools it has, the
 - `Edit` (which also covers `Write`) only inside the notes folder, which is also the working directory, so Claude can't read the rest of the vault either;
 - no `Bash`, `WebFetch`, `WebSearch`, subagents or `Artifact`.
 
+`Edit` and `Write` are never denied outright, since a deny would override the folder rule; `--block Edit` turns note writing off, and `--allow` can't make edits allowed everywhere.
+
 The run is in `dontAsk` mode: anything not on the list is denied instead of waiting for an approval. `pwi eod check` shows the list; `--allow TOOL` and `--block TOOL` change one tool. `ANTHROPIC_API_KEY` is removed from the run's environment, because Claude Code doesn't load claude.ai connectors with one.
 
 The finish run gets only `get_day` and `Edit` inside that day's folder.
@@ -52,6 +54,10 @@ A click changes a claim only if:
 4. for the version of the claim the card showed, still unconfirmed or disputed. If the claim changed since, the card says so and the claim goes to the next review.
 
 Anything else is dropped and logged. An answer is recorded like an edit in the frontend: a new version by me (`changed_by` me, reason *confirmed in the Chat review*), and in the audit trail as mine. Confirm and Save correction make the claim verified. A click delivered twice is applied once.
+
+- **Confidential since posting.** Cards are drawn through `claims_shareable`, the same confidential filter Claude's views use (it keeps retracted claims, so a retracted card still shows what I retracted). A claim labelled confidential after its card was posted is marked *hidden* at the listener's next pass, and its card is redrawn without it. The finish run's prompt names it by its id only, so its line is taken out of the notes.
+- **Nothing lost on a failure.** A Pub/Sub event is acknowledged only once handled. One that failed (a locked store, Google unreachable) is delivered again, and handling is idempotent; one that fails 5 times is dropped and logged. A review is marked answered only once its closing message or its continuation is posted; otherwise the listener's next pass finishes it, and the custom message ids keep a retry from posting twice.
+- **The notes rewrite** marks exactly the answers it was given as in the notes. An answer that comes in while Claude rewrites stays due for the next rewrite.
 
 ## The notes
 

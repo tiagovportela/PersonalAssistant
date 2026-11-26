@@ -19,6 +19,8 @@ The layer recorded these answers, one line per claim: the claim id, my answer, a
 - *disputed*: I questioned it; it stays open.
 - *retracted*: it was wrong.
 - *changed* or *moved*: it changed in another way, or went to a newer review; call `get_day` for {{day}} to see its label now.
+- *hidden*: it was marked confidential before I answered.
+- A line whose text says *now confidential* or *deleted*: take that claim's line out of the notes entirely, whatever the answer.
 
 ## Steps
 

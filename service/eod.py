@@ -22,10 +22,12 @@ since Claude Code doesn't load connectors with one.
 
 import json
 import os
+import queue
 import re
 import shutil
 import subprocess
 import sys
+import threading
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -186,10 +188,17 @@ def reads_only(name):
 
 def classify(names, overrides=None):
     """(allowed, blocked) tool names: the layer's tools without the approval ones, connectors' tools that only
-    read, and the built-in tools that only read. My overrides come last."""
+    read, and the built-in tools that only read. My overrides come last.
+
+    The file-editing tools are in neither list: a run allows them through its Edit rule, inside the notes folder
+    only, and a deny would override that rule. They're denied only if I block one, and never allowed everywhere."""
     overrides = overrides or {}
     allowed, blocked = [], []
     for name in sorted(set(names)):
+        if name in FILE_EDITS:
+            if name in overrides.get("block", []):
+                blocked.append(name)
+            continue
         if name.startswith("mcp__pwi__"):
             ok = name.removeprefix("mcp__pwi__") not in APPROVAL
         elif name.startswith("mcp__"):
@@ -229,28 +238,38 @@ def discover(s, cwd):
                                 text=True, cwd=cwd, env=child_env(s["claude"]))
     except OSError as e:
         raise EodError(f"Claude Code couldn't start: {e}") from None
-    init = None
-    try:
-        proc.stdin.write("Reply with the single word OK.")
-        proc.stdin.close()
+    found = queue.Queue()
+
+    def read_until_init():
         for line in proc.stdout:
             try:
                 event = json.loads(line)
             except ValueError:
                 continue
             if event.get("type") == "system" and event.get("subtype") == "init":
-                init = event
-                break
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=CHECK_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
-        err = proc.stderr.read()
-        proc.stdout.close()
-        proc.stderr.close()
+                found.put(event)
+                return
+        found.put(None)  # Claude Code exited without one
+
+    try:
+        proc.stdin.write("Reply with the single word OK.")
+        proc.stdin.close()
+    except OSError:
+        pass  # it exited already; what it printed says why
+    threading.Thread(target=read_until_init, daemon=True).start()
+    try:
+        init = found.get(timeout=CHECK_TIMEOUT)
+        late = None
+    except queue.Empty:
+        init, late = None, f"no answer within {CHECK_TIMEOUT} seconds"
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+    err = late or proc.stderr.read()
+    proc.stderr.close()
     if init is None:
         raise EodError("Claude Code didn't start: " + ((err or "").strip()[-400:] or "no output") +
                        "\nCheck it runs with `claude`, signed in to your claude.ai Team account.")
@@ -382,19 +401,24 @@ def run(db, day=None, force=False):
 
 
 def answers(db, day):
-    rows = db.execute("SELECT i.claim_id, i.answer, c.text FROM review_items i JOIN review_batches b ON b.id = i.batch_id"
-                      " LEFT JOIN current_claims c ON c.id = i.claim_id WHERE b.day = ? AND i.answer IS NOT NULL"
-                      " ORDER BY b.posted_at, i.position", (day,)).fetchall()
-    return "\n".join(f"{r['claim_id']}  {r['answer']}  {(r['text'] or '').replace(chr(10), ' ')}" for r in rows)
+    """The answers for a day's notes: (the items' ids, one line per answer: the claim id, my answer, and its text now).
+    The text comes through the confidential filter: a claim labelled confidential since, or deleted, is named by
+    its id only, to be taken out of the notes."""
+    rows = db.execute("SELECT i.id, i.claim_id, i.answer, s.text, c.id AS exists_now FROM review_items i"
+                      " JOIN review_batches b ON b.id = i.batch_id"
+                      " LEFT JOIN claims_shareable s ON s.id = i.claim_id LEFT JOIN current_claims c ON c.id = i.claim_id"
+                      " WHERE b.day = ? AND i.answer IS NOT NULL ORDER BY b.posted_at, i.position", (day,)).fetchall()
+    return [r["id"] for r in rows], "\n".join(
+        f"{r['claim_id']}  {r['answer']}  " + (r["text"].replace(chr(10), " ") if r["text"] is not None else
+                                                 "(now confidential: remove its line)" if r["exists_now"] else
+                                                 "(deleted: remove its line)") for r in rows)
 
 
 def days_to_finish(db):
-    """Days with answers newer than the last rewrite of their notes."""
+    """Days with an answer the notes don't show yet."""
     return [r[0] for r in db.execute(
-        "SELECT b.day FROM review_batches b JOIN review_items i ON i.batch_id = b.id WHERE i.answered_at IS NOT NULL"
-        " AND i.answer IN ('confirmed', 'corrected', 'disputed', 'retracted') GROUP BY b.day"
-        " HAVING MAX(i.answered_at) > COALESCE((SELECT MAX(notes_updated_at) FROM review_batches x WHERE x.day = b.day), '')"
-        " ORDER BY b.day")]
+        "SELECT DISTINCT b.day FROM review_batches b JOIN review_items i ON i.batch_id = b.id"
+        " WHERE i.answer IN ('confirmed', 'corrected', 'disputed', 'retracted') AND i.noted = 0 ORDER BY b.day")]
 
 
 def finish(db, day=None):
@@ -409,9 +433,12 @@ def finish(db, day=None):
             continue
         run_id = begin(db, d, "finish")
         try:
+            # Only the answers Claude is given count as in the notes: one that comes in while it works stays due.
+            seen, lines = answers(db, d)
             prompt = render("end_of_day_finish", day=d, weekday=date.fromisoformat(d).strftime("%A"),
-                            folder=s["folder"], answers=answers(db, d) or "(no answers recorded)")
+                            folder=s["folder"], answers=lines or "(no answers recorded)")
             result = ask_claude(s, prompt, ["mcp__pwi__get_day"], [], folder, daily, FINISH_TIMEOUT)
+            db.executemany("UPDATE review_items SET noted = 1 WHERE id = ?", [(i,) for i in seen])
             db.execute("UPDATE review_batches SET notes_updated_at = ? WHERE day = ?", (store.now(), d))
             end(db, run_id, "ok", run_detail(result))
             results.append({"day": d, "status": "ok"})
