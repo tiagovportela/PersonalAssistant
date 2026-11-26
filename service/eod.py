@@ -366,8 +366,9 @@ def end(db, run_id, status, detail):
                (store.now(), status, detail[:1000], run_id))
 
 
-def run(db, day=None, force=False):
-    """The 19:30 run. Returns {day, status, detail, review}."""
+def run(db, day=None, force=False, post=True):
+    """The 19:30 run. Returns {day, status, detail, review}. Without post, the claims aren't sent to the Chat
+    review (run_range sends them once, at the end)."""
     s = settings(db)
     folder = notes_dir(s)
     day = day or workday(s)
@@ -390,7 +391,7 @@ def run(db, day=None, force=False):
     except EodError as e:
         status, detail = "failed", str(e)
     try:  # what Claude saved before a failure is worth reviewing too
-        if chat_app.connected():
+        if post and chat_app.connected():
             posted = review.post_batch(db, chat_app.App(), day)
             if posted.get("gaps"):
                 detail += f"; review not posted: {posted['gaps'][0]}"
@@ -398,6 +399,41 @@ def run(db, day=None, force=False):
         detail += f"; review not posted: {e}"
     end(db, run_id, status, detail)
     return {"day": day, "status": status, "detail": detail, "review": posted}
+
+
+def days_between(s, start, end):
+    """The workdays (my --days) from start to end, both included, oldest first."""
+    try:
+        first, last = date.fromisoformat(start), date.fromisoformat(end)
+    except ValueError:
+        raise EodError("Give the days as YYYY-MM-DD, e.g. --from 2026-11-02 --to 2026-11-25.") from None
+    if first > last:
+        raise EodError(f"--from {start} is after --to {end}.")
+    if last > date.today():
+        raise EodError(f"--to {end} is in the future.")
+    days = weekdays(s["days"])
+    return [(first + timedelta(n)).isoformat() for n in range((last - first).days + 1)
+            if (first + timedelta(n)).weekday() in days]
+
+
+def run_range(db, start, end, force=False, each=None):
+    """Runs the agent for each workday from start to end, oldest first, so each summary can link the one before.
+    Days that already ran are skipped unless forced. The claims go to the Chat review once, after the last day,
+    instead of one review per day. each(result) is called after every day, to show progress."""
+    s = settings(db)
+    results = []
+    for day in days_between(s, start, end):
+        result = run(db, day, force, post=False)
+        results.append(result)
+        if each:
+            each(result)
+    posted = None
+    if results and chat_app.connected():
+        try:
+            posted = review.post_batch(db, chat_app.App(), results[-1]["day"])
+        except chat_app.AppError as e:
+            posted = {"posted": 0, "gaps": [str(e)]}
+    return {"days": results, "review": posted}
 
 
 def answers(db, day):

@@ -32,7 +32,8 @@ frontend exists. install.py puts a `pwi` launcher in ~/.local/bin.
                            --at (19:30) and --days (Mon..Fri); starts its timers
     pwi eod check          which tools the agent gets: the layer's, connectors' read-only tools, the notes folder
                            (--allow TOOL or --block TOOL to change one)
-    pwi eod run [--day D]  run the agent now (the timer runs it by itself); --force runs a day again
+    pwi eod run [--day D]  run the agent now (the timer runs it by itself); --force runs a day again;
+                           --from D --to D runs every workday in a range, oldest first
     pwi eod finish [--day D]  rewrite the day's notes with my answers from the Chat review
     pwi eod status         settings, last runs, and what's waiting in the review
     pwi eod off            stop the timers
@@ -250,6 +251,20 @@ def eod_command(db, args):
             print(f"Allowed ({len(done['allowed'])}): " + ", ".join(done["allowed"]))
             print(f"Denied ({len(done['blocked'])}): " + ", ".join(done["blocked"]))
             print("Edits: only inside the notes folder. Change a tool with --allow NAME or --block NAME.")
+        elif args.step == "run" and (args.start or args.end):
+            if args.day or not (args.start and args.end):
+                print("error: give --from and --to together, without --day", file=sys.stderr)
+                return 1
+            days = eod.days_between(eod.settings(db), args.start, args.end)
+            print(f"{len(days)} workday{'s' if len(days) != 1 else ''} to run, oldest first. Each takes a few minutes.")
+            done = eod.run_range(db, args.start, args.end, args.force,
+                                 each=lambda r: print(f"{r['day']}: {r['status']}. {r['detail']}", flush=True))
+            posted = done.get("review") or {}
+            if posted.get("posted"):
+                print(f"{posted['posted']} claims posted to Google Chat.")
+            elif posted.get("gaps"):
+                print(f"Review not posted: {posted['gaps'][0]}")
+            return 1 if any(r["status"] == "failed" for r in done["days"]) else 0
         elif args.step == "run":
             done = eod.run(db, args.day, args.force)
             print(f"{done['day']}: {done['status']}. {done['detail']}")
@@ -352,6 +367,9 @@ def main():
     checking.add_argument("--block", action="append", metavar="TOOL", help="deny this tool")
     running = agent.add_parser("run", help="run it now")
     running.add_argument("--day", help="the workday, YYYY-MM-DD (default: today, or the last workday before noon)")
+    running.add_argument("--from", dest="start", metavar="DAY",
+                         help="with --to: run every workday in a range, oldest first, YYYY-MM-DD")
+    running.add_argument("--to", dest="end", metavar="DAY", help="the last day of the range, YYYY-MM-DD")
     running.add_argument("--force", action="store_true", help="run again for a day that already ran")
     agent.add_parser("finish", help="rewrite the day's notes with my answers").add_argument("--day", help="YYYY-MM-DD")
     agent.add_parser("status", help="settings, last runs and the review")
