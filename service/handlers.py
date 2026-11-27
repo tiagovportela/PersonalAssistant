@@ -18,6 +18,8 @@ import collect
 import store
 from chat import CHAT_READS
 from reads import CONNECTOR_NAMES, READS
+from repos import REPO_READS
+from wiki import WIKI_READS, WIKI_WRITES
 from writes import WRITES, Refused
 from experiences import PROMPTS, instructions, prompt_messages
 from tools import EXPERIENCES, TOOLS
@@ -28,8 +30,10 @@ VERSION = "0.1.0"
 SUPPORTED_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
 TOOL_NAMES = {t["name"] for t in TOOLS}
 READ_TOOLS = {t["name"] for t in TOOLS if t["annotations"]["readOnlyHint"]}
-READS = {**READS, **CHAT_READS}
-REFRESHING = set(READS) - {"get_evidence", "read_confidential", *CHAT_READS}  # reads that collect first when data is stale
+READS = {**READS, **CHAT_READS, **REPO_READS, **WIKI_READS}
+WRITES = {**WRITES, **WIKI_WRITES}
+# Reads that collect first when data is stale. read_repo reads the repository itself, at a commit.
+REFRESHING = set(READS) - {"get_evidence", "read_confidential", "read_repo", *CHAT_READS}
 STALE_AFTER = 300  # seconds: older data is refreshed before a read
 REFRESH_WAIT = 10  # seconds a read waits for that refresh
 MAX_CHARS = 40000  # results longer than this are trimmed

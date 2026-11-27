@@ -10,7 +10,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from tools import ALIAS_KINDS, APPROVAL, ARTIFACT_KINDS, CLAIM_TYPES, ITEM_TYPES, TOOLS  # noqa: E402
+from tools import (ALIAS_KINDS, APPROVAL, ARTIFACT_KINDS, CLAIM_TYPES, ITEM_TYPES, TOOLS,  # noqa: E402
+                   WIKI_COMPILED, WIKI_GENERATED, WIKI_KINDS)
 from validate import error_text, validate  # noqa: E402
 
 SCHEMA = (HERE.parent / "schema" / "schema.sql").read_text()
@@ -19,7 +20,8 @@ ARCHITECTURE_TOOLS = {  # architecture v0.2 §4
     "get_evidence", "get_metrics", "get_instructions",
     "propose_claim", "update_claim", "save_session_note", "link_items", "set_claim_status", "add_confidential_label",
 }
-ADDED_TOOLS = {"list_projects", "read_confidential", "add_project_alias", "chat_spaces", "chat_messages"}
+ADDED_TOOLS = {"list_projects", "read_confidential", "add_project_alias", "chat_spaces", "chat_messages",
+               "get_wiki_page", "read_repo", "propose_wiki_update"}  # the wiki: docs/knowledge_wiki.md
 
 
 def check(label, condition):
@@ -59,7 +61,7 @@ def fields(schema):
 def main():
     by_name = {t["name"]: t for t in TOOLS}
     check("no duplicate tool names", len(by_name) == len(TOOLS))
-    check("every architecture tool is present, plus the five documented additions",
+    check("every architecture tool is present, plus the documented additions",
           set(by_name) == ARCHITECTURE_TOOLS | ADDED_TOOLS)
     check("no delete or remove tools", not any(re.search(r"delete|remove|purge", n) for n in by_name))
     check("names follow MCP naming rules", all(re.fullmatch(r"[A-Za-z0-9_-]{1,64}", n) for n in by_name))
@@ -68,7 +70,7 @@ def main():
 
     reads = {"search", "get_day", "get_week", "get_project", "list_unconfirmed", "read_claude_sessions",
              "get_evidence", "get_metrics", "get_instructions", "list_projects", "read_confidential",
-             "chat_spaces", "chat_messages"}
+             "chat_spaces", "chat_messages", "get_wiki_page", "read_repo"}
     check("read tools say read-only, write tools don't",
           all(by_name[n]["annotations"]["readOnlyHint"] is (n in reads) for n in by_name))
     check("no tool claims to be destructive",
@@ -98,6 +100,9 @@ def main():
     rels = set(by_name["link_items"]["inputSchema"]["properties"]["rel"]["enum"])
     check("link relations match the links table", rels == check_enum("links", "rel"))
     check("artifact kinds match the artifacts table", set(ARTIFACT_KINDS) == check_enum("artifacts", "kind"))
+    check("wiki page kinds match the wiki_pages table, and each kind's compiled and generated sections differ",
+          set(WIKI_KINDS) == check_enum("wiki_pages", "kind") == set(WIKI_COMPILED) == set(WIKI_GENERATED)
+          and all(not WIKI_COMPILED[k].keys() & WIKI_GENERATED[k].keys() for k in WIKI_KINDS))
     check("Claude can add online aliases only, never local ones like repository paths",
           set(ALIAS_KINDS) < check_enum("project_aliases", "kind") and "repo_path" not in ALIAS_KINDS)
 
@@ -139,6 +144,44 @@ def main():
     check("get_evidence takes exactly one of event_id or evidence_id",
           validate("get_evidence", {"event_id": "git:commit:abc"}) == [] and validate("get_evidence", {"evidence_id": 3}) == []
           and validate("get_evidence", {}) != [] and validate("get_evidence", {"event_id": "x", "evidence_id": 3}) != [])
+    # The wiki
+    cite = [{"repo": "PersonalAssistant", "commit": "781ce85", "path": "README.md"}]
+    update = {"page": "pwi", "base_version": 0, "reason": "first version",
+              "sections": [{"id": "overview", "blocks": [{"text": "One **SQLite** file; see [[pwi]].", "cites": cite}]}]}
+    check("a valid wiki update passes", validate("propose_wiki_update", update) == [])
+    def problems(**changes):
+        return " ".join(validate("propose_wiki_update", {**update, **changes}))
+    def statement(text="x", cites=cite):
+        return [{"id": "overview", "blocks": [{"text": text, "cites": cites}]}]
+    check("a wiki update names one page, with the version it was read at",
+          "base_version is required" in " ".join(validate("propose_wiki_update", {k: v for k, v in update.items() if k != "base_version"}))
+          and "not both" in problems(new={"kind": "topic", "title": "OAuth"}))
+    check("a person page needs an email",
+          "email is required" in " ".join(validate("propose_wiki_update", {"new": {"kind": "person", "title": "Ana Silva"},
+                                                                          "reason": "x", "summary": "Finance"})))
+    check("statements are plain text on one line: no HTML, images or non-https links",
+          "has HTML" in problems(sections=statement("<img src=x onerror=alert(1)>"))
+          and "https://" in problems(sections=statement("[click](javascript:alert(1))"))
+          and "image" in problems(sections=statement("![x](https://example.com/a.png)"))
+          and "one line" in problems(sections=statement("a\nb"))
+          and "600" in problems(sections=statement("x" * 601)))
+    check("every statement cites evidence, and each citation is one thing",
+          "cites only pages" in problems(sections=statement(cites=[{"page": "pwi"}]))
+          and "exactly one of" in problems(sections=statement(cites=[{"claim_id": "clm_1", "event_id": "git:commit:a"}]))
+          and "needs both repo and commit" in problems(sections=statement(cites=[{"repo": "PersonalAssistant"}])))
+    check("generated sections can't be written, and your own sections need a heading",
+          "built by the layer" in problems(sections=[{"id": "decisions", "blocks": []}])
+          and "heading is required" in problems(sections=[{"id": "setup", "blocks": [{"text": "x", "cites": cite}]}]))
+    check("read_repo reads a file or lists commits, inside the repository",
+          validate("read_repo", {"project": "pwi", "path": "docs/a.md", "commit": "781ce85"}) == []
+          and validate("read_repo", {"project": "pwi", "path": "../x"}) != []
+          and validate("read_repo", {"project": "pwi", "path": "a", "since": "781ce85"}) != []
+          and validate("read_repo", {"project": "pwi", "commit": "781ce85"}) != [])
+    check("get_wiki_page filters the catalog, or reads one page's sections",
+          validate("get_wiki_page", {}) == [] and validate("get_wiki_page", {"kind": "topic"}) == []
+          and validate("get_wiki_page", {"page": "pwi", "sections": ["overview"]}) == []
+          and validate("get_wiki_page", {"page": "pwi", "kind": "topic"}) != []
+          and validate("get_wiki_page", {"sections": ["overview"]}) != [])
     check("the error text tells Claude to retry",
           error_text("propose_claim", missing).endswith("Fix these and call propose_claim again."))
 

@@ -145,7 +145,51 @@ def main():
         db.execute(f"insert into {table} ({table}) values ('integrity-check')")
     check("search indexes are consistent after updates and deletes", True)
     check("foreign keys hold", db.execute("pragma foreign_key_check").fetchall() == [])
+    test_wiki(db)
     test_migration()
+
+
+def test_wiki(db):
+    db.execute("insert into wiki_pages (id, kind, title, project_id, created_at) values ('pwi', 'project', 'P', 'pwi', ?)", (NOW,))
+    def version(n):
+        return raises(db, "insert into wiki_versions (page_id, version, written_by, written_at) values ('pwi', ?, 'claude', ?)",
+                      (n, NOW))
+    check("wiki versions are numbered 1, 2, 3 with no gaps", version(2) is not None and version(1) is None and version(3) is not None)
+    check("wiki versions are append-only",
+          "append-only" in (raises(db, "update wiki_versions set summary = 'x' where page_id = 'pwi'") or ""))
+    check("a project page needs its project, and a person page an email",
+          raises(db, "insert into wiki_pages (id, kind, title, created_at) values ('x', 'project', 'X', ?)", (NOW,)) is not None
+          and raises(db, "insert into wiki_pages (id, kind, title, created_at) values ('y', 'person', 'Y', ?)", (NOW,)) is not None)
+    section = db.execute("insert into wiki_sections (page_id, version, section_id, position, heading)"
+                         " values ('pwi', 1, 'overview', 0, 'What it is')").lastrowid
+    statement = db.execute("insert into wiki_statements (section_seq, position, style, text)"
+                           " values (?, 0, 'paragraph', 'The store is one SQLite file.')", (section,)).lastrowid
+    cite = "insert into wiki_citations (statement_seq, position, claim_id, commit_sha, source_id) values (?, ?, ?, ?, ?)"
+    check("a citation names exactly one thing, and a commit names its repository",
+          raises(db, cite, (statement, 0, "clm_x", "abc1234", 1)) is not None
+          and raises(db, cite, (statement, 1, None, "abc1234", None)) is not None
+          and raises(db, cite, (statement, 2, None, None, None)) is not None
+          and raises(db, cite, (statement, 3, None, "abc1234", 1)) is None)
+    db.execute("insert into wiki_links values (?, 'other-page')", (statement,))
+    db.execute("insert into wiki_fts (rowid, heading, text) values (?, 'What it is', 'The store is one SQLite file.')", (statement,))
+    v1 = db.execute("select seq from wiki_versions where page_id = 'pwi'").fetchone()[0]
+    db.execute("insert into wiki_pages_fts (rowid, title, key_terms, summary) values (?, 'P', 'armazenamento', '')", (v1,))
+    check("wiki search finds statements and page key terms, accents ignored",
+          db.execute("select count(*) from wiki_fts where wiki_fts match 'sqlite'").fetchone() == (1,)
+          and db.execute("select count(*) from wiki_pages_fts where wiki_pages_fts match 'armazenamento'").fetchone() == (1,))
+    db.execute("delete from wiki_pages where id = 'pwi'")
+    check("deleting a page removes its versions, sections, statements, citations, links and search rows",
+          db.execute("select (select count(*) from wiki_versions) + (select count(*) from wiki_sections)"
+                     " + (select count(*) from wiki_statements) + (select count(*) from wiki_citations)"
+                     " + (select count(*) from wiki_links) + (select count(*) from wiki_fts)"
+                     " + (select count(*) from wiki_pages_fts)").fetchone() == (0,))
+    db.execute("insert into projects (id, name, created_at) values ('solo', 'Solo', ?)", (NOW,))
+    db.execute("insert into wiki_pages (id, kind, title, project_id, created_at) values ('solo', 'project', 'S', 'solo', ?)", (NOW,))
+    db.execute("delete from projects where id = 'solo'")
+    check("deleting a project removes its wiki page", db.execute("select count(*) from wiki_pages").fetchone() == (0,))
+    for table in ("wiki_fts", "wiki_pages_fts"):
+        db.execute(f"insert into {table} ({table}) values ('integrity-check')")
+    check("wiki search indexes are consistent after deletes", True)
 
 
 # The search index of schema version 1, to rebuild a version 1 store for the migration test.
@@ -171,6 +215,10 @@ DROP VIEW current_claims;
 ALTER TABLE claim_versions DROP COLUMN type;
 ALTER TABLE claim_versions DROP COLUMN counterparty;
 DROP TABLE review_items; DROP TABLE review_messages; DROP TABLE review_batches; DROP TABLE eod_runs;
+DROP VIEW wiki_current; DROP TABLE wiki_links; DROP TABLE wiki_citations; DROP TABLE wiki_statements;
+DROP TABLE wiki_sections; DROP TABLE wiki_notes; DROP TABLE wiki_versions; DROP TABLE wiki_pages;
+DROP TABLE wiki_fts; DROP TABLE wiki_pages_fts; DROP TABLE search_misses;
+DELETE FROM retention WHERE item_type IN ('wiki_version', 'search_miss');
 UPDATE schema_version SET version = 1;
 """
 
@@ -200,6 +248,13 @@ def test_migration():
               dict(db.execute("select provider, enabled from connectors").fetchall())
               == {"github": 1, "google_calendar": 1, "notion": 1, "gmail": 0, "google_chat": 0, "google_drive": 0}
               and db.execute("insert into project_aliases values ('gmail_query', 'label:x', 'pwi', 'me', ?)", (NOW,)).rowcount == 1)
+        check("the upgrade adds the wiki, search misses, and their retention and audit",
+              db.execute("select count(*) from wiki_pages").fetchone() == (0,)
+              and db.execute("select count(*) from search_misses").fetchone() == (0,)
+              and dict(db.execute("select item_type, days from retention where item_type in ('wiki_version', 'search_miss')"))
+              == {"wiki_version": 90, "search_miss": 90}
+              and db.execute("insert into audit_log (at, actor, action, item_type) values (?, 'claude', 'read_repo', 'repo')",
+                             (NOW,)).rowcount == 1)
         check("after the upgrade, existing events are searchable by message body",
               db.execute("select count(*) from events_fts where events_fts match 'porque'").fetchone() == (1,))
         backup = sqlite3.connect(Path(tmp) / "store.db.bak-v1")
