@@ -21,7 +21,7 @@ ARCHITECTURE_TOOLS = {  # architecture v0.2 §4
     "propose_claim", "update_claim", "save_session_note", "link_items", "set_claim_status", "add_confidential_label",
 }
 ADDED_TOOLS = {"list_projects", "read_confidential", "add_project_alias", "chat_spaces", "chat_messages",
-               "get_wiki_page", "read_repo", "propose_wiki_update"}  # the wiki: docs/knowledge_wiki.md
+               "get_wiki_page", "read_repo", "propose_wiki_update", "wiki_lint"}  # the wiki: docs/knowledge_wiki.md
 
 
 def check(label, condition):
@@ -70,7 +70,7 @@ def main():
 
     reads = {"search", "get_day", "get_week", "get_project", "list_unconfirmed", "read_claude_sessions",
              "get_evidence", "get_metrics", "get_instructions", "list_projects", "read_confidential",
-             "chat_spaces", "chat_messages", "get_wiki_page", "read_repo"}
+             "chat_spaces", "chat_messages", "get_wiki_page", "read_repo", "wiki_lint"}
     check("read tools say read-only, write tools don't",
           all(by_name[n]["annotations"]["readOnlyHint"] is (n in reads) for n in by_name))
     check("no tool claims to be destructive",

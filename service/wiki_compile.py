@@ -25,7 +25,8 @@ import store
 import wiki
 
 INSTRUCTIONS = eod.HERE.parent / "contracts" / "instructions" / "wiki.md"
-TOOLS = ["get_wiki_page", "read_repo", "get_project", "list_projects", "search", "get_evidence", "propose_wiki_update"]
+TOOLS = ["get_wiki_page", "wiki_lint", "read_repo", "get_project", "list_projects", "search", "get_evidence",
+         "propose_wiki_update"]
 DENIED = ["Bash", "Read", "Glob", "Grep", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch",
           "Task", "Agent"]
 MAX_PAGES = 5

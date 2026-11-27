@@ -8,6 +8,7 @@ import { Overview } from "./views/Overview.jsx";
 import { Projects } from "./views/Projects.jsx";
 import { Retention } from "./views/Retention.jsx";
 import { Sources } from "./views/Sources.jsx";
+import { Wiki } from "./views/Wiki.jsx";
 
 const SECTIONS = [
   ["overview", "Overview", Overview],
@@ -15,6 +16,7 @@ const SECTIONS = [
   ["online", "Online sources", Online],
   ["projects", "Projects", Projects],
   ["claims", "Claims", Claims],
+  ["wiki", "Wiki", Wiki],
   ["activity", "Activity", Events],
   ["confidential", "Confidential", Confidential],
   ["retention", "Retention", Retention],

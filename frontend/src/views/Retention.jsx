@@ -10,6 +10,8 @@ const KINDS = [
   ["unconfirmed_claim", "Unconfirmed claims", "Counted from Claude's last change"],
   ["confirmed_claim", "Verified claims", "Their evidence may expire sooner; Claude says so"],
   ["audit", "Audit trail", "What was collected, changed or deleted, never the content"],
+  ["wiki_version", "Past wiki versions", "A page's current version stays until you delete the page"],
+  ["search_miss", "Searches that found nothing", "Kept so the evaluation can tell whether keyword search is enough"],
   ["transcript", "Meeting transcripts", "Not collected yet"],
   ["audio", "Meeting audio", "Not collected yet"],
   ["notes_folder", "Meeting notes folder", "Not collected yet"],

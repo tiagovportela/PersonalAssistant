@@ -4,11 +4,11 @@ Write or update pages of my knowledge wiki: one page per project, person and rec
 
 ## Which pages
 
-The pages I named. Otherwise, call `get_wiki_page` without `page` for the catalog, and take the pages marked `stale`, then project pages not written yet (`version` 0) whose project was active lately.
+The pages I named. Otherwise, `wiki_lint` lists what needs fixing across the wiki: start with its findings, then project pages not written yet.
 
 ## Steps
 
-1. **Read the page.** `get_wiki_page` with `page` gives its outline: sections, labels, `built_from`, and why it's `stale`. Read the sections you'll change in full with `sections`. Keep its `version`: you pass it as `base_version`.
+1. **Read the page.** `get_wiki_page` with `page` gives its outline: sections, labels, `built_from`, and why it's `stale`. Read the sections you'll change in full with `sections`. Keep its `version`: you pass it as `base_version`. `wiki_lint` with `page` lists what needs fixing on it, each finding with its fix.
 2. **Read the repository** (project pages). `read_repo` without `path` gives the overview: README, CLAUDE.md, manifests, the docs folder and the tree. Then read the docs that say what the project is and how it works. If the page has `built_from`, read only what changed: `read_repo` with `since` set to that commit, then the files those commits touched.
 3. **Read the claims.** `get_project` lists decisions, blockers and commitments; `search` finds the reasons behind a decision, in Portuguese and English. Open evidence with `get_evidence` when a claim is unclear.
 4. **Write.** Call `propose_wiki_update` with only the sections that change, each sent whole, and `built_from` set to the head commit `read_repo` showed for each repository you read. With many changes, try `dry_run` first.
