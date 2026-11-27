@@ -391,6 +391,8 @@ data/search.js          window.PWI_SEARCH = …
 catalog.json            the catalog, for agents that only read files
 ```
 
+**The look** follows a Soft Technical Minimalism design language: a warm off-white canvas, white panels with thin borders and soft radii, depth by tonal layering, and muted accents kept for data and states. `assets/site.css` is its design system: every colour, type size, space, radius, shadow and motion is a token, components use semantic tokens only (a test checks no raw colour appears outside the token blocks), and a dark theme changes token values, never structure. Accents are fills and strokes; text uses darker "ink" versions that meet WCAG AA, and a label is always a word beside its colour. Presentation lives in `service/wiki_site_html.py`, apart from the data and the build in `service/wiki_site.py`. The overview is a bento of metrics, the map with a segmented control, what needs attention, recent pages and the catalog; a page is an article panel with a rail (contents, evidence by label, my notes, the local graph, linked pages), and each statement's sources open in place.
+
 **Each page has three layers:**
 1. **Semantic HTML**, for me and for agents that open the file:
    - `<article data-page data-kind>`;

@@ -42,7 +42,7 @@
       var e = h.i.entry;
       var link = el("a", { href: pageUrl(e.page, e.section) });
       link.appendChild(el("strong", {}, e.title));
-      if (e.section) link.appendChild(el("span", { "class": "meta" }, " · " + e.heading));
+      if (e.section) link.appendChild(el("span", { "class": "meta-line" }, " · " + e.heading));
       var at = fold(e.text).indexOf(words[0]);
       var snippet = at < 0 ? e.text.slice(0, 140) : (at > 40 ? "…" : "") + e.text.slice(Math.max(0, at - 40), at + 100) + "…";
       link.appendChild(el("span", { "class": "snippet" }, snippet));
@@ -52,8 +52,34 @@
   }
   if (box) {
     box.addEventListener("input", search);
-    box.addEventListener("keydown", function (e) { if (e.key === "Escape") { box.value = ""; search(); } });
+    box.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") { box.value = ""; search(); }
+      if (e.key === "ArrowDown") { var first = results.querySelector("a"); if (first) { e.preventDefault(); first.focus(); } }
+    });
+    results.addEventListener("keydown", function (e) {
+      var links = Array.prototype.slice.call(results.querySelectorAll("a")), at = links.indexOf(document.activeElement);
+      if (e.key === "ArrowDown" && at < links.length - 1) { e.preventDefault(); links[at + 1].focus(); }
+      if (e.key === "ArrowUp") { e.preventDefault(); (at > 0 ? links[at - 1] : box).focus(); }
+      if (e.key === "Escape") { results.hidden = true; box.focus(); }
+    });
+    document.addEventListener("click", function (e) {
+      if (!results.contains(e.target) && e.target !== box) results.hidden = true;
+    });
   }
+
+  // Sources popovers: one open at a time; Escape or a click elsewhere closes them.
+  var popovers = document.querySelectorAll("details.sources");
+  popovers.forEach(function (d) {
+    d.addEventListener("toggle", function () {
+      if (d.open) popovers.forEach(function (o) { if (o !== d) o.open = false; });
+    });
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") popovers.forEach(function (d) { if (d.open) { d.open = false; d.querySelector("summary").focus(); } });
+  });
+  document.addEventListener("click", function (e) {
+    popovers.forEach(function (d) { if (d.open && !d.contains(e.target)) d.open = false; });
+  });
 
   // Diagrams: hovering a node highlights its edges; a node linked to a page opens it.
   document.querySelectorAll("svg.dg").forEach(function (dg) {
@@ -98,7 +124,7 @@
     edges = edges.filter(function (e) { return near[e.from] && near[e.to]; });
     if (nodes.length < 2) { svg.parentNode.hidden = true; return; }
   }
-  var W = 900, H = current ? 360 : 620;
+  var W = current ? 300 : 900, H = current ? 240 : 560;
   svg.setAttribute("viewBox", "0 0 " + W + " " + H);
   var byId = {};
   // Start on a circle, in a fixed order, so the same data always gives the same picture.
@@ -162,10 +188,26 @@
     var tip = document.createElementNS(SVG, "title");
     tip.textContent = p.n.title + " (" + p.n.kind + (p.n.stale ? ", stale" : "") + (p.n.compiled ? "" : ", not written yet") + ")";
     g.appendChild(tip); g.appendChild(c); g.appendChild(t);
-    g.addEventListener("mouseenter", function () { focus(p.n.id); });
-    g.addEventListener("mouseleave", function () { focus(null); });
+    g.setAttribute("aria-label", tip.textContent);
+    g.addEventListener("mouseenter", function (e) { focus(p.n.id); showTip(p.n, e.clientX, e.clientY); });
+    g.addEventListener("mousemove", function (e) { moveTip(e.clientX, e.clientY); });
+    g.addEventListener("mouseleave", function () { focus(null); hideTip(); });
+    g.addEventListener("focus", function () { var r = c.getBoundingClientRect(); focus(p.n.id); showTip(p.n, r.right, r.top); });
+    g.addEventListener("blur", function () { focus(null); hideTip(); });
     dots.appendChild(g);
   });
+  var tipBox = null;
+  function showTip(n, x, y) {
+    hideTip();
+    tipBox = el("div", { "class": "tooltip", role: "tooltip" });
+    tipBox.appendChild(el("strong", {}, n.title));
+    var state = n.kind + (n.stale ? " · stale" : "") + (n.compiled ? "" : " · not written yet");
+    tipBox.appendChild(el("span", {}, state + " · " + (byId[n.id].links.length) + " links"));
+    document.body.appendChild(tipBox);
+    moveTip(x, y);
+  }
+  function moveTip(x, y) { if (tipBox) { tipBox.style.left = (x + 14) + "px"; tipBox.style.top = (y + 14) + "px"; } }
+  function hideTip() { if (tipBox) { tipBox.remove(); tipBox = null; } }
   function focus(id) {
     svg.classList.toggle("focused", !!id);
     var near = {};
@@ -175,18 +217,18 @@
       l.classList.toggle("near", !!id && (l.getAttribute("data-from") === id || l.getAttribute("data-to") === id));
     });
   }
-  document.querySelectorAll(".kind-filter").forEach(function (box) {
-    box.addEventListener("change", function () {
-      var kind = box.value, show = box.checked;
+  // The segmented control: which kinds of page the map and the catalog show.
+  document.querySelectorAll(".segment[data-kind]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var show = button.getAttribute("aria-pressed") !== "true";
+      button.setAttribute("aria-pressed", String(show));
+      var kind = button.getAttribute("data-kind");
       dots.querySelectorAll('.node[data-kind="' + kind + '"]').forEach(function (g) { g.classList.toggle("hidden", !show); });
-      document.querySelectorAll('.catalog li[data-kind="' + kind + '"]').forEach(function (li) { li.hidden = !show; });
+      document.querySelectorAll('.catalog-group[data-kind="' + kind + '"]').forEach(function (g) { g.hidden = !show; });
+      var off = {};
+      document.querySelectorAll('.segment[aria-pressed="false"]').forEach(function (b) { off[b.getAttribute("data-kind")] = true; });
       lines.querySelectorAll("line").forEach(function (l) {
-        var from = byId[l.getAttribute("data-from")].n.kind, to = byId[l.getAttribute("data-to")].n.kind;
-        var hidden = [from, to].some(function (k) {
-          var f = document.querySelector('.kind-filter[value="' + k + '"]');
-          return f && !f.checked;
-        });
-        l.classList.toggle("hidden", hidden);
+        l.classList.toggle("hidden", !!(off[byId[l.getAttribute("data-from")].n.kind] || off[byId[l.getAttribute("data-to")].n.kind]));
       });
     });
   });

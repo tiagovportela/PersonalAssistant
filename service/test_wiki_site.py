@@ -144,7 +144,8 @@ def main():
           and '<a class="wl" href="beta.html">Beta</a>' in atlas
           and '<a href="https://example.com/spec" rel="noopener noreferrer" target="_blank">the spec</a>' in atlas)
     check("each statement carries its label and citations; a cited file links to GitHub at its commit",
-          'data-label="verified"' in atlas and '<span class="label verified">verified</span>' in atlas
+          'data-label="verified"' in atlas
+          and '<span class="label verified"><span class="dot" aria-hidden="true"></span>verified</span>' in atlas
           and f'href="https://github.com/acme/atlas/blob/{head["head"]["commit"][:12]}/README.md"' in atlas)
     embedded = re.search(r'<script type="application/json" id="pwi-page">(.*?)</script>', atlas, re.S).group(1)
     check("the page's data is inline and in pages/<id>.json, the same as get_wiki_page returns",
@@ -178,6 +179,23 @@ def main():
     check("a documentation image is copied into the site, named by its content, and shown with <img>",
           len(images) == 1 and f'<img src="../{images[0]}" alt="The map, from the docs">' in atlas)
     check("the repository map is drawn as a tree", 'class="dg dg-tree"' in atlas and "atlas/" in atlas)
+
+    # The design system ------------------------------------------------------------------------
+    css = files["assets/site.css"]
+    outside_tokens = re.sub(r":root \{.*?\n\}", "", css, flags=re.S)
+    check("colours are tokens: raw colour values appear only where the tokens are defined, light and dark",
+          "--c-canvas: #f3f3f1" in css and "prefers-color-scheme: dark" in css
+          and not re.search(r"#[0-9a-fA-F]{3,8}\b", outside_tokens))
+    check("focus is always visible, and motion respects reduced-motion settings",
+          ":focus-visible" in css and "prefers-reduced-motion" in css)
+    check("pages have the shell: a sidebar with every page, breadcrumbs, and labels as a word beside their colour",
+          'class="sidebar"' in atlas and 'aria-current="page"' in atlas and 'class="crumbs"' in atlas
+          and 'class="dot" aria-hidden="true"></span>verified' in atlas)
+    check("a statement's evidence sits behind a sources button that opens in place",
+          '<details class="sources"><summary aria-label="2 sources">' in atlas)
+    check("the overview is a bento of metrics, the map with a segmented control, what needs attention, and the catalog",
+          all(k in files["index.html"] for k in ('class="panel metrics"', 'class="segmented" role="group"',
+                                                 'aria-pressed="true"', 'class="panel attention-panel"', 'class="panel catalog"')))
 
     # Rebuilding -------------------------------------------------------------------------------
     check("the service rebuilds only when something changed",
