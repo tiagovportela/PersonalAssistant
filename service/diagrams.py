@@ -490,10 +490,11 @@ def tree(d, warnings, pid):
         if depth:
             parts.append(f'<path class="dg-tree-line" d="M{x - 16},{y - 20} v16 h10"/>')
         role = e.get("role", "")
+        name_width = 8.2 * len(name)  # estimated: wide enough for common sans-serif fonts at 13 px
         parts.append(f'<g class="dg-node entry" data-node="{esc(path)}"><text class="dg-path start" x="{x}" y="{y}">'
-                     f'{esc(name)}</text>' + (f'<text class="dg-role start" x="{x + 8 + 7.5 * len(name)}" y="{y}">'
+                     f'{esc(name)}</text>' + (f'<text class="dg-role start" x="{x + 16 + name_width:.1f}" y="{y}">'
                                              f'{esc(role)}</text>' if role else "") + "</g>")
-        width = max(width, x + 16 + 7.5 * len(name) + 7 * len(role))
+        width = max(width, x + 24 + name_width + 7 * len(role))
     return width, 30 + len(entries) * 28, parts
 
 
