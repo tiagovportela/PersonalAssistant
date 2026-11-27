@@ -1,26 +1,28 @@
-"""The wiki as a static site (docs/knowledge_wiki.md, step 3): `pwi wiki build` and `pwi wiki open`.
+"""The wiki as a static site for agents (docs/knowledge_wiki.md): `pwi wiki build` and `pwi wiki open`.
 
-The site is a rendering of the store: every page Claude may see, as Claude sees it, through wiki.py, so
-labels, hiding and generated sections are the same. Only code writes HTML: every piece of text is escaped,
-and statements' small Markdown subset (bold, italics, code, [[page]] links and https links) is turned into
-tags here, never passed through. Each page has a strict Content-Security-Policy, no inline scripts, and loads
-nothing from the network. The data goes in classic <script src> files that set a global, since browsers block
-fetch and module scripts on file://.
+No scripts and no app: every page Claude may see, as Claude sees it, through wiki.py, so labels, hiding and
+generated sections are the same, in the formats agents read best. Plain HTML pages come from wiki_site_html.py,
+the Markdown, llms.txt and JSONL from wiki_site_text.py, and every piece of text is escaped in both.
+The app's Wiki section (`pwi open`) is where I browse the wiki, with a map, search, versions and notes.
 
-    index.html          catalog, search and the full graph
-    pages/<id>.html     one per page; its data also inline (<script type="application/json">) and in
-    pages/<id>.json     for agents that only read files
-    catalog.json        the catalog, for the same agents
-    assets/site.css, assets/site.js     the look, and the graph, search and filters (written here, no library)
-    data/catalog.js, data/graph.js, data/search.js
+    llms.txt            start here: what the wiki is, its files, and every page with a one-line summary
+    index.html          the same list as a web page
+    pages/<id>.md       one per page, as Markdown, the diagrams as images with a text version
+    pages/<id>.html     one per page, as plain HTML with the diagrams drawn inline; its data also inline
+    pages/<id>.json     its data, as get_wiki_page returns it
+    statements.jsonl    every statement, diagram and image, one per line, to grep without opening a page
+    catalog.json        the list of pages; graph.json, the links between them
+    diagrams/           each diagram as SVG (with its own style) and PNG (when rsvg-convert is installed)
+    images/             documentation images, copied from their repositories
+    assets/site.css     a small stylesheet: readable text, and the diagrams' look
 
 It's built into a new folder and swapped in, so a half-built site is never seen. The service rebuilds it within
 a minute of any change the wiki shows (a page, a claim, a label, a deletion, retention), so it's a snapshot that
 stays close to the store. It lives in the layer's own folder (700, files 600), not in the vault.
 """
 
+import base64
 import hashlib
-import html
 import json
 import os
 import shutil
@@ -33,23 +35,11 @@ import repos
 import store
 import wiki
 import wiki_site_html as view
+import wiki_site_text as text
+from wiki_render import data
 
 SITE_DIR = paths.DATA_DIR / "wiki"
 ASSETS = Path(__file__).resolve().parent / "wiki_site_assets"
-
-
-def esc(text):
-    return html.escape(str(text if text is not None else ""), quote=True)
-
-
-def data(value, indent=None):
-    """JSON with no '<', '>' or '&', so nothing in it can close a tag or read as markup, wherever it's opened."""
-    text = json.dumps(value, ensure_ascii=False, indent=indent)
-    return text.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
-
-
-def plain(text):
-    return wiki.plain(text)
 
 
 # The data the site is made of --------------------------------------------------------
@@ -84,57 +74,66 @@ def graph(catalog, pages):
     return {"nodes": nodes, "edges": [{"from": a, "to": b} for a, b in edges]}
 
 
-def search_index(pages):
-    entries = []
-    for page_id, page in pages.items():
-        entries.append({"page": page_id, "title": page["title"], "section": "", "heading": page["title"],
-                        "text": " ".join(filter(None, [page.get("summary"), " ".join(page.get("key_terms", []))]))})
-        for s in page.get("content", []):
-            if s["source"] == "compiled":
-                text = " ".join(plain(b["text"]) if "text" in b else diagrams.plain_text(b["diagram"]) if "diagram" in b
-                                else b.get("caption") or b["image"]["path"] for b in s["blocks"])
-            else:
-                text = " ".join(str(i.get("text") or i.get("title") or i.get("person") or i.get("value") or "")
-                                for i in s.get("items", []))
-            if text.strip():
-                entries.append({"page": page_id, "title": page["title"], "section": s["id"], "heading": s["heading"],
-                                "text": text[:4000]})
-    return entries
-
-
-# Building ------------------------------------------------------------------------------------
-
 def write(path, text):
+    write_bytes(path, text.encode("utf-8"))
+
+
+def write_bytes(path, data):
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    path.write_bytes(data)
     os.chmod(path, 0o600)
 
 
 def copy_images(db, pages, folder):
-    """The pages' documentation images, copied from their repositories at the cited commit, named by content."""
-    names = {}
+    """The pages' documentation images, copied from their repositories at the cited commit, named by content.
+    Returns block id -> {"image": file name}."""
+    names, files = {}, {}
     for page in pages.values():
         for s in page.get("content", []):
             for b in s.get("blocks", []):
                 if b.get("kind") != "image":
                     continue
                 key = (b["image"]["repo"], b["image"]["commit"], b["image"]["path"])
-                repo = repos.by_name(db, key[0])
-                if repo is None or key in names:
+                if key not in names:
+                    names[key] = copy_image(db, key, folder)
+                if names[key]:
+                    files[b["id"]] = {"image": names[key]}
+    return files
+
+
+def copy_image(db, key, folder):
+    repo = repos.by_name(db, key[0])
+    kind = repos.image_type(key[2])
+    if repo is None or not kind:
+        return None
+    try:
+        data = repos.git_bytes(repo["locator"], "cat-file", "blob", f"{key[1]}:{key[2]}")
+    except Exception:
+        return None
+    name = hashlib.sha256(data).hexdigest()[:32] + "." + kind.split("/")[1].replace("jpeg", "jpg")
+    write_bytes(folder / name, data)
+    return name
+
+
+def draw_diagrams(pages, folder):
+    """Each diagram as its own SVG, which carries its style, and as a PNG when rsvg-convert is installed, for agents
+    that look at pictures. Named <page>.<diagram id>. Returns block id -> {"svg": path, "png": path}."""
+    files, used = {}, set()
+    for page_id, page in pages.items():
+        for s in page.get("content", []):
+            for b in s.get("blocks", []):
+                if b.get("kind") != "diagram":
                     continue
-                try:
-                    data = repos.git_bytes(repo["locator"], "cat-file", "blob", f"{key[1]}:{key[2]}")
-                except Exception:
-                    continue
-                kind = repos.image_type(key[2])
-                if not kind:
-                    continue
-                name = hashlib.sha256(data).hexdigest()[:32] + "." + kind.split("/")[1].replace("jpeg", "jpg")
-                folder.mkdir(mode=0o700, parents=True, exist_ok=True)
-                (folder / name).write_bytes(data)
-                os.chmod(folder / name, 0o600)
-                names[key] = name
-    return names
+                name = f"{page_id}.{b['diagram']['id']}"
+                name = name if name not in used else f"{name}.{b['id']}"
+                used.add(name)
+                write(folder / f"{name}.svg", diagrams.render(b["diagram"], pid=name, standalone=True)["svg"] + "\n")
+                files[b["id"]] = {"svg": f"{folder.name}/{name}.svg"}
+                png = diagrams.preview(b["diagram"])
+                if png:
+                    write_bytes(folder / f"{name}.png", base64.b64decode(png))
+                    files[b["id"]]["png"] = f"{folder.name}/{name}.png"
+    return files
 
 
 def build(db, target=None):
@@ -147,24 +146,25 @@ def build(db, target=None):
     fresh = target.with_name(f"{target.name}.new-{os.getpid()}")
     shutil.rmtree(fresh, ignore_errors=True)
     fresh.mkdir(mode=0o700, parents=True)
+    built_at = store.now()
+    files = {**copy_images(db, pages, fresh / "images"), **draw_diagrams(pages, fresh / "diagrams")}
+    write(fresh / "llms.txt", text.llms_txt(catalog, built_at))
     write(fresh / "index.html", view.index_html(catalog, pages))
-    images = copy_images(db, pages, fresh / "images")
     for page_id, page in pages.items():
-        write(fresh / "pages" / f"{page_id}.html", view.page_html(page, catalog, known, github, images))
+        write(fresh / "pages" / f"{page_id}.html", view.page_html(page, catalog, known, github, files))
+        write(fresh / "pages" / f"{page_id}.md", text.page_md(page, known, files))
         write(fresh / "pages" / f"{page_id}.json", data(page, indent=1))
-    write(fresh / "catalog.json", data({"pages": catalog}, indent=1))
-    write(fresh / "data" / "catalog.js", f"window.PWI_CATALOG = {data(catalog)};\n")
-    write(fresh / "data" / "graph.js", f"window.PWI_GRAPH = {data(graph(catalog, pages))};\n")
-    write(fresh / "data" / "search.js", f"window.PWI_SEARCH = {data(search_index(pages))};\n")
-    for asset in ("site.css", "site.js"):
-        write(fresh / "assets" / asset, (ASSETS / asset).read_text(encoding="utf-8"))
+    write(fresh / "statements.jsonl", text.statements_jsonl(pages, files))
+    write(fresh / "catalog.json", data({"built_at": built_at, "pages": catalog}, indent=1))
+    write(fresh / "graph.json", data(graph(catalog, pages), indent=1))
+    write(fresh / "assets" / "site.css", (ASSETS / "site.css").read_text(encoding="utf-8"))
     old = target.with_name(f"{target.name}.old-{os.getpid()}")
     if target.exists():
         target.rename(old)
     fresh.rename(target)
     os.chmod(target, 0o700)
     shutil.rmtree(old, ignore_errors=True)
-    store.set_setting(db, "wiki.site_built_at", store.now())
+    store.set_setting(db, "wiki.site_built_at", built_at)
     store.set_setting(db, "wiki.site_build_seconds", round(time.monotonic() - started, 1))
     return {"path": str(target), "pages": len(pages), "written": sum(e["compiled"] for e in catalog)}
 

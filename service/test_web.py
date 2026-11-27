@@ -252,6 +252,18 @@ def main():
         check("my notes on a page are saved here, and a page's versions and notes read back",
               request("PUT", f"/api/wiki/{page}/notes", {"text": "Ask Ana before changing the cache."})[0] == 200
               and request("GET", f"/api/wiki/{page}")[1]["notes"]["text"] == "Ask Ana before changing the cache.")
+        status, shown, _ = request("GET", f"/api/wiki/{page}")
+        check("a page comes with its view as Claude sees it, ready to show, my notes in it",
+              status == 200 and shown["view"]["page"] == page and isinstance(shown["view"].get("content", []), list)
+              and shown["view"]["my_notes"]["text"] == "Ask Ana before changing the cache.")
+        status, wiki, _ = request("GET", "/api/wiki")
+        check("the wiki's overview has the map's pages and links, and what the text rests on",
+              status == 200 and page in {n["id"] for n in wiki["graph"]["nodes"]} and isinstance(wiki["graph"]["edges"], list)
+              and isinstance(wiki["labels"], dict))
+        status, found, _ = request("GET", "/api/wiki-search?q=zzqx")
+        check("the wiki can be searched from here, and a search that finds nothing isn't recorded as a miss",
+              status == 200 and found["results"] == [] and request("GET", "/api/wiki-search?q=")[1]["results"] == []
+              and len(request("GET", "/api/wiki")[1]["misses"]) == len(wiki["misses"]))
         check("an unknown page can't be read, restored or deleted",
               request("GET", "/api/wiki/no-such-page")[0] == 400 and request("DELETE", "/api/wiki/no-such-page")[0] == 400
               and request("POST", f"/api/wiki/{page}/restore", {"version": 7})[0] == 400)

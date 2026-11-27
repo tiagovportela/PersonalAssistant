@@ -82,6 +82,7 @@ def routes():
         ("GET", r"/api/connectors", lambda app, db, m, q, b: admin.connectors(db)),
         ("PUT", r"/api/connectors/([a-z_]+)", lambda app, db, m, q, b: admin.set_connector(db, m[1], b)),
         ("GET", r"/api/wiki", lambda app, db, m, q, b: wiki_admin.overview(db)),
+        ("GET", r"/api/wiki-search", lambda app, db, m, q, b: wiki_admin.search(db, one(q, "q"))),
         ("POST", r"/api/wiki/build", lambda app, db, m, q, b: wiki_admin.build(db)),
         ("GET", r"/api/wiki/([a-z0-9-]+)", lambda app, db, m, q, b: wiki_admin.page(db, m[1])),
         ("GET", r"/api/wiki/([a-z0-9-]+)/diff", lambda app, db, m, q, b: wiki_admin.diff(

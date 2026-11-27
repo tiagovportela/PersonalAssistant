@@ -5,15 +5,20 @@ version of a page and what changed between two, restore an old version (saved as
 and write my notes on a page, which Claude reads as verified. Every change goes into the audit log as mine.
 """
 
+import base64
 import difflib
 import json
+from collections import Counter
 
 import diagrams
 import paths
+import reads
+import repos
 import store
 import wiki
 import wiki_site
 from admin import Invalid, audit, transaction
+from wiki_render import activity_svg, diagram_svg, inline, repo_map_svgs
 
 MISSES = 50
 
@@ -52,7 +57,17 @@ def overview(db):
                      "stale": False if confidential or v is None else reader.staleness(p, v, detail=False)["is_stale"],
                      "has_notes": bool(db.execute("SELECT 1 FROM wiki_notes WHERE page_id = ?", (p["id"],)).fetchone())})
     site = wiki_site.SITE_DIR
-    return {"pages": rows, "lint": wiki.lint(db, {}),
+    catalog = wiki.get_wiki_page(db, {}).get("pages", [])
+    outlines = {e["page"]: wiki.get_wiki_page(db, {"page": e["page"]}) for e in catalog}
+    labels = Counter()
+    for o in outlines.values():
+        for sec in o.get("sections", []):
+            labels.update(sec.get("labels", {}))
+    edges = sorted({(a, l["page"]) for a, o in outlines.items() for l in o.get("links", []) if l["page"] in outlines})
+    return {"pages": rows, "lint": wiki.lint(db, {}), "labels": dict(labels),
+            "graph": {"nodes": [{"id": e["page"], "title": e["title"], "kind": e["kind"], "compiled": e["compiled"],
+                                 "stale": e["stale"]} for e in catalog],
+                      "edges": [{"from": a, "to": b} for a, b in edges]},
             "misses": [dict(r) for r in db.execute("SELECT at, query, kinds, project_id FROM search_misses"
                                                    " ORDER BY at DESC LIMIT ?", (MISSES,))],
             "site": {"path": str(site), "built": (site / "index.html").exists(),
@@ -87,7 +102,59 @@ def page(db, page_id):
             "confidential": p["project_id"] in confidential_projects(db),
             "versions": versions, "notes": dict(note) if note else None,
             "sections": version_sections(db, p["id"], versions[0]["version"]) if versions else [],
-            "lint": wiki.lint(db, {"page": p["id"]}).get("findings", []) if wiki.page_row(db, p["id"]) else []}
+            "lint": wiki.lint(db, {"page": p["id"]}).get("findings", []) if wiki.page_row(db, p["id"]) else [],
+            "view": view(db, p["id"])}
+
+
+def view(db, page_id):
+    """The page as Claude sees it, ready to show: statements as HTML, diagrams and charts as SVG, images inline.
+    None for a page Claude may not see (a confidential project's), whose stored text the page shows instead."""
+    if wiki.page_row(db, page_id) is None:
+        return None
+    outline = wiki.get_wiki_page(db, {"page": page_id})
+    ids = [s["id"] for s in outline.get("sections", [])]
+    page = wiki.get_wiki_page(db, {"page": page_id, "sections": ids}) if ids else outline
+    known = {p["id"] for p in wiki.visible_pages(db)}
+    github = wiki_site.github_links(db)
+    for s in page.get("content", []):
+        for b in s.get("blocks", []):
+            for c in b.get("cites", []):
+                if "commit" in c and github.get(c["repo"]):
+                    c["url"] = (f"https://github.com/{github[c['repo']]}/{'blob' if c.get('path') else 'commit'}/"
+                                f"{c['commit']}" + (f"/{c['path']}" if c.get("path") else ""))
+            if b.get("kind") == "diagram":
+                b["svg"], b["text_lines"] = diagram_svg(b), diagrams.as_text(b["diagram"])
+            elif b.get("kind") == "image":
+                b["src"] = image_src(db, b["image"])
+            else:
+                b["html"] = inline(b["text"], known, lambda target: f"#wiki/{target}")
+        if s["id"] == "repo-map" and s.get("items"):
+            s["svgs"] = repo_map_svgs(s["items"])
+        if s["id"] == "activity" and s.get("items"):
+            s["svg"] = activity_svg(s["items"])
+    return page
+
+
+def image_src(db, image):
+    """A documentation image as a data: URI, read from its repository at the cited commit."""
+    repo = repos.by_name(db, image["repo"])
+    kind = repos.image_type(image["path"])
+    if repo is None or not kind:
+        return None
+    try:
+        data = repos.git_bytes(repo["locator"], "cat-file", "blob", f"{image['commit']}:{image['path']}")
+    except Exception:
+        return None
+    return f"data:{kind};base64,{base64.b64encode(data).decode()}"
+
+
+def search(db, text):
+    """Search across the wiki's sections and pages, as Claude's search finds them; it isn't recorded as a miss."""
+    query = reads.fts_query(text or "")
+    if not query:
+        return {"results": []}
+    found = sorted(wiki.search_hits(db, query, None, 20), key=lambda pair: pair[0])
+    return {"results": [item for _, item in found[:20]]}
 
 
 def diff(db, page_id, old, new):
