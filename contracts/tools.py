@@ -20,7 +20,7 @@ CLAIM_ID = {"type": "string", "pattern": "^clm_[A-Za-z0-9]+$", "description": "A
 CLAIM_TYPES = ["decision", "commitment", "blocker", "fact"]
 ITEM_TYPES = ["source", "project", "event", "artifact", "claim"]
 EXPERIENCES = ["daily_briefing", "project_resumption", "end_of_day_review",
-               "search", "weekly_review", "ad_hoc_context"]
+               "search", "weekly_review", "ad_hoc_context", "wiki"]
 
 ITEM = {
     "type": "object",
@@ -179,8 +179,8 @@ TOOLS = [
          "Returns the instructions for one experience. Call this first whenever I ask about my work: a briefing, "
          "what I did on a day or in a week (e.g. 'what did I do yesterday' or 'o que fiz ontem': daily_briefing; "
          "'last week': weekly_review), a project resumption, an end-of-day review, a question about when, why or "
-         "with whom something happened (search), or help with a work task. Every experience reads both the layer "
-         "and the online connectors I allow.",
+         "with whom something happened (search), help with a work task, or writing or updating pages of my knowledge "
+         "wiki (wiki). Every experience reads both the layer and the online connectors I allow.",
          obj({"experience": {"type": "string", "enum": EXPERIENCES}}, ["experience"])),
     read("list_projects",
          "Lists my projects with their aliases (GitHub, Notion, Drive, Gmail, Chat, calendar) and last activity, "

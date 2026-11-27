@@ -19,6 +19,7 @@ At 19:30 on workdays an agent reads my day, saves what it finds as claims, write
          collect → claude -p in <vault>/Work, with the agent's instructions
            Claude: session notes · get_day · connectors · propose_claim · writes Daily/<day>/
          the layer posts the unconfirmed claims to my Chat DM, as cards
+         then pwi-wiki.service: the wiki's compile run (docs/knowledge_wiki.md)
 later  my clicks → Google Chat → Pub/Sub → the service pulls them, checks them, records them as mine
          all answered → pwi-eod-finish.service → claude -p rewrites Daily/<day>/ with my answers
 08:30  pwi-eod-finish.timer: the same, for answers that came late
@@ -30,7 +31,7 @@ later  my clicks → Google Chat → Pub/Sub → the service pulls them, checks 
 ## The tools Claude gets
 
 At each run the layer starts Claude Code once just to read the tools it has, then builds an exact list:
-- the layer's tools, except `set_claim_status`, `add_confidential_label` and `read_confidential`;
+- the layer's tools, except `set_claim_status`, `add_confidential_label` and `read_confidential`, and `propose_wiki_update`: the wiki has its own run;
 - connector tools whose names say they read (search, get, list, read, fetch, find, query, view, download) and none of the words that change something (create, update, send, delete, share, request, merge, comment…). Anything unclear is denied;
 - `Edit` (which also covers `Write`) only inside the notes folder, which is also the working directory, so Claude can't read the rest of the vault either;
 - no `Bash`, `WebFetch`, `WebSearch`, subagents or `Artifact`.
@@ -71,7 +72,7 @@ Work/People/<Full Name>.md
 Work/Sources/<Title>.md                       a doc, sheet, deck, Notion page, PR, artifact or meeting
 ```
 
-- **The graph.** Obsidian's graph comes from links, so every daily note links its summary, project, people and sources, and each summary links the previous one. Hubs have `aliases` (a person's first name and email) so short links resolve to them.
+- **The graph.** Obsidian's graph comes from links, so every daily note links its summary, project, people and sources, and each summary links the previous one. Hubs have `aliases` (a person's first name and email) for Obsidian's autocomplete. Links use the full name, as `[[Ana Silva|Ana]]` when shorter, since an alias doesn't make `[[Ana]]` reach the note.
 - **Tags.** Nested tags give the graph's groups and filters: `pwi/<kind>`, `project/<id>`, `person/<first-last>`, `source/<kind>`, `topic/<theme>`. Each claim line also carries `claim/<type>`, `status/<label>`, `commitment/mine|theirs` and a block id `^clm-<id>`, so the finish run can find it and the summary can link to it. To see tags as nodes, turn on *Tags* in the graph view's filters. Colour groups such as `path:Work/People` and `tag:#source` help.
 
 ## Setting it up

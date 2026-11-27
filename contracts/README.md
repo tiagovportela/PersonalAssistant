@@ -4,7 +4,7 @@
 
 ## Changes from architecture v0.2 §4
 
-- **`get_instructions` is the entry point.** Its description tells Claude to call it first for any of the six experiences, because the Linux beta doesn't show MCP prompts.
+- **`get_instructions` is the entry point.** Its description tells Claude to call it first for any of the six experiences, because the Linux beta doesn't show MCP prompts. A seventh, `wiki`, holds the instructions for writing wiki pages, also used by the compile run.
 - **Added `list_projects`**, so Claude can find the project id that `get_project`, `search` and the write tools need.
 - **Added `chat_spaces` and `chat_messages`** (Phase 2): Google Chat read live through the layer's own read-only Google sign-in, instead of a third-party server (see `docs/third_party_reviews.md`). The layer enforces the allowlist for them in code.
 - **Added `add_project_alias`** (Phase 2), so Claude can record where a project lives in an online source (GitHub, Notion, Drive, Gmail, Chat, calendar) once it finds it. It only adds; I remove aliases in the frontend.

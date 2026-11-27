@@ -42,10 +42,11 @@ HERE = Path(__file__).resolve().parent
 AGENT = HERE.parent / "contracts" / "agent"
 COMMON = HERE.parent / "contracts" / "instructions" / "common.md"
 UNIT_DIR = paths.CONFIG_HOME / "systemd" / "user"
-UNITS = ("pwi-eod.service", "pwi-eod.timer", "pwi-eod-finish.service", "pwi-eod-finish.timer")
+UNITS = ("pwi-eod.service", "pwi-eod.timer", "pwi-eod-finish.service", "pwi-eod-finish.timer", "pwi-wiki.service")
 TIMERS = ("pwi-eod.timer", "pwi-eod-finish.timer")
 RUN_TIMEOUT = 50 * 60  # seconds Claude may take for the day
 FINISH_TIMEOUT = 15 * 60
+WIKI_TIMEOUT = 90 * 60  # the wiki's compile run: up to five pages, 15 minutes each
 CHECK_TIMEOUT = 120
 DAYS = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
 
@@ -132,15 +133,17 @@ def write_units(at, days, claude):
     path = ":".join(dict.fromkeys(f for f in folders if f))
     service = ("[Unit]\nDescription=Work layer: {what}\nWants=pwi.service\nAfter=pwi.service network-online.target\n\n"
                f'[Service]\nType=oneshot\nEnvironment="PATH={path}"\n'
-               f'ExecStart="{python}" -I "{cli}" eod {{step}}\nTimeoutStartSec={{limit}}\nNice=5\n')
+               f'ExecStart="{python}" -I "{cli}" {{command}}\nTimeoutStartSec={{limit}}\nNice=5\n')
     timer = ("[Unit]\nDescription=Work layer: {what}\n\n[Timer]\nOnCalendar={when}\nPersistent=true\n\n"
              "[Install]\nWantedBy=timers.target\n")
     texts = {
-        "pwi-eod.service": service.format(what="end-of-day agent", step="run", limit=RUN_TIMEOUT + 600),
+        "pwi-eod.service": service.format(what="end-of-day agent", command="eod run", limit=RUN_TIMEOUT + 600),
         "pwi-eod.timer": timer.format(what=f"end-of-day agent at {at}", when=f"{days} *-*-* {at}:00"),
-        "pwi-eod-finish.service": service.format(what="end-of-day notes after my review", step="finish",
+        "pwi-eod-finish.service": service.format(what="end-of-day notes after my review", command="eod finish",
                                                  limit=FINISH_TIMEOUT + 300),
         "pwi-eod-finish.timer": timer.format(what="end-of-day notes, morning pass", when="*-*-* 08:30:00"),
+        # Started by each end-of-day run when it ends (start_wiki), so a wiki failure never touches the notes.
+        "pwi-wiki.service": service.format(what="the wiki's compile run", command="wiki compile", limit=WIKI_TIMEOUT),
     }
     UNIT_DIR.mkdir(parents=True, exist_ok=True)
     for name, text in texts.items():
@@ -154,6 +157,12 @@ def remove_units(systemd=True):
         (UNIT_DIR / name).unlink(missing_ok=True)
     if systemd:
         subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
+
+
+def start_wiki():
+    """Called when an end-of-day run ends: update the wiki pages that need it, in the background."""
+    if (UNIT_DIR / "pwi-wiki.service").exists() and os.environ.get("PWI_NO_SYSTEMD") != "1":
+        subprocess.run(["systemctl", "--user", "start", "--no-block", "pwi-wiki.service"], capture_output=True)
 
 
 def start_finish(day=None):
@@ -271,10 +280,11 @@ def hook_settings(overrides):
 
 
 def claude_argv(s, allowed, blocked, edits_in, hook=False):
+    """With edits_in None, Claude may edit nothing."""
     return [s["claude"], "-p", "--output-format", "json", "--permission-mode", "dontAsk",
             "--mcp-config", str(bridge_config()),
             *(["--settings", str(hook_settings(s["overrides"]))] if hook else []),
-            "--allowedTools", *allowed, edit_rule(edits_in),
+            "--allowedTools", *allowed, *([edit_rule(edits_in)] if edits_in else []),
             "--disallowedTools", *sorted(set(blocked) | {"Bash", "WebFetch", "WebSearch", "NotebookEdit", "Task", "Agent"})]
 
 
@@ -387,6 +397,8 @@ def run(db, day=None, force=False, post=True):
     except chat_app.AppError as e:
         detail += f"; review not posted: {e}"
     end(db, run_id, status, detail)
+    if post:
+        start_wiki()
     return {"day": day, "status": status, "detail": detail, "review": posted}
 
 
@@ -422,6 +434,8 @@ def run_range(db, start, end, force=False, each=None):
             posted = review.post_batch(db, chat_app.App(), results[-1]["day"])
         except chat_app.AppError as e:
             posted = {"posted": 0, "gaps": [str(e)]}
+    if results:
+        start_wiki()
     return {"days": results, "review": posted}
 
 

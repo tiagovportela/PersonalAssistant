@@ -22,7 +22,7 @@ sys.path.insert(0, str(HERE.parent / "contracts"))
 sys.path.insert(0, str(HERE))
 from experiences import instructions  # noqa: E402
 from store import SCHEMA_VERSION  # noqa: E402
-from tools import TOOLS  # noqa: E402
+from tools import EXPERIENCES, TOOLS  # noqa: E402
 
 NOW = "2026-11-02T17:00:00Z"
 EVIDENCE = [{"event_id": "git:commit:abc123"}]
@@ -142,8 +142,9 @@ def main():
 
             prompts = rpc("prompts/list")["result"]["prompts"]
             prompt = rpc("prompts/get", {"name": "weekly_review"})["result"]
-            check("the six experiences are also served as prompts, with the same text",
-                  len(prompts) == 6 and prompt["messages"][0]["content"]["text"] == instructions("weekly_review"))
+            check("the experiences (the brief's six, and the wiki) are also served as prompts, with the same text",
+                  [p["name"] for p in prompts] == EXPERIENCES and len(EXPERIENCES) == 7
+                  and prompt["messages"][0]["content"]["text"] == instructions("weekly_review"))
             check("unknown prompt and unknown tool are JSON-RPC errors",
                   rpc("prompts/get", {"name": "nope"})["error"]["code"] == -32602
                   and call("delete_claim")["error"]["code"] == -32602)
