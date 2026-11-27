@@ -519,17 +519,18 @@ LAYOUTS = {"flow": layered, "state": layered, "architecture": layered, "sequence
            "tree": tree, "timeline": timeline}
 
 PREVIEW_STYLE = """
-.dg-bg{fill:#fff}text{font:13px sans-serif;fill:#1d1d1b;text-anchor:middle}.start{text-anchor:start}
-.dg-node rect,.dg-node polygon,.dg-node path{fill:#eef3f8;stroke:#2f5d8a;stroke-width:1.5}
-.dg-node.decision polygon{fill:#fbf3e6;stroke:#8a5a2f}.dg-node.store path,.dg-node.data polygon{fill:#eef6f0;stroke:#3d7a4f}
-.dg-node.external rect{stroke-dasharray:5 4}.dg-node.pain rect{stroke:#b23b3b}.dg-pain{fill:#b23b3b}
-.dg-pain-mark{fill:#fff;font-weight:700}.dg-edge{stroke:#6b6860;stroke-width:1.5;fill:none}
-.dg-edge.async,.dg-edge.reply{stroke-dasharray:6 4}.dg-edge.data{stroke:#3d7a4f}.dg-arrowhead{fill:#6b6860}
-.dg-edge-label,.dg-note,.dg-result,.dg-role,.dg-date{font-size:11px;fill:#6b6860}
+.dg-bg{fill:#fff}text{font:13px Inter,"Helvetica Neue",Arial,sans-serif;fill:#242424;text-anchor:middle}.start{text-anchor:start}
+.dg-node rect,.dg-node polygon,.dg-node path{fill:#fff;stroke:#628ac8;stroke-width:1.5}
+.dg-node.decision polygon{fill:#fbf6ec;stroke:#d6ae65}.dg-node.store path,.dg-node.data polygon{fill:#f0f8f5;stroke:#65bc9d}
+.dg-node.person rect,.dg-node.start rect,.dg-node.end rect{stroke:#a18bd4}
+.dg-node.external rect{stroke:#909399;stroke-dasharray:5 4}.dg-node.pain rect{stroke:#d98298}.dg-pain{fill:#d98298}
+.dg-pain-mark{fill:#fff;font-weight:700}.dg-edge{stroke:#909399;stroke-width:1.5;fill:none}
+.dg-edge.async,.dg-edge.reply{stroke-dasharray:6 4}.dg-edge.data{stroke:#65bc9d}.dg-arrowhead{fill:#909399}
+.dg-edge-label,.dg-note,.dg-result,.dg-role,.dg-date{font-size:11px;fill:#686b70}
 .dg-edge-label{paint-order:stroke;stroke:#fff;stroke-width:4px;stroke-linejoin:round}
-.dg-group rect{fill:none;stroke:#8a5a2f;stroke-dasharray:4 3}.dg-group-label,.dg-lane-label{text-anchor:start;font-size:12px;fill:#8a5a2f}
-.dg-lane rect{fill:#f6f4ef;stroke:none}.dg-lifeline,.dg-tree-line,.dg-tick{stroke:#c9c5bb;stroke-dasharray:4 4;fill:none}
-.dg-axis{stroke:#6b6860;stroke-width:2}.dg-node.item circle{fill:#2f5d8a}
+.dg-group rect{fill:#faf8fd;stroke:#a18bd4;stroke-dasharray:4 3}.dg-group-label,.dg-lane-label{text-anchor:start;font-size:12px;fill:#6a52a8}
+.dg-lane rect{fill:#f3f3f1;stroke:#e0e1dd}.dg-lifeline,.dg-tree-line,.dg-tick{stroke:#e0e1dd;stroke-dasharray:4 4;fill:none}
+.dg-axis{stroke:#909399;stroke-width:2}.dg-node.item circle{fill:#628ac8}
 """
 
 

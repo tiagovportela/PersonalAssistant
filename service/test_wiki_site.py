@@ -54,8 +54,15 @@ def add_claim(db, claim_id, kind, text, project, status="proposed", **extra):
 
 
 def site_text(folder):
-    return {p.relative_to(folder).as_posix(): p.read_text(encoding="utf-8") if not p.parent.name == "images" else ""
+    return {p.relative_to(folder).as_posix(): p.read_text(encoding="utf-8") if p.suffix not in (".png", ".jpg") else ""
             for p in folder.rglob("*") if p.is_file()}
+
+
+def bare_markup(markdown):
+    """'<' in Markdown that a viewer could read as HTML: not escaped, not in a code span, not a link's <destination>."""
+    text = re.sub(r"`[^`]*`", "", markdown)
+    text = re.sub(r"\]\(<https://[^>\s]*>\)", "", text)
+    return re.findall(r"(?<!\\)<", text)
 
 
 def main():
@@ -115,27 +122,34 @@ def main():
     done = wiki_site.build(db)
     site = Path(done["path"])
     files = site_text(site)
-    check("the site has its index, a page and its JSON per page, the catalog, data and assets",
-          {"index.html", "catalog.json", "assets/site.css", "assets/site.js", "data/catalog.js", "data/graph.js",
-           "data/search.js", "pages/atlas.html", "pages/atlas.json", "pages/beta.html", "pages/evil-b-repo.html"}
-          <= set(files) and done["pages"] == 3 and done["written"] == 1)
+    check("the site has llms.txt, its index, each page as HTML, Markdown and JSON, the statements, catalog and graph,"
+          " a stylesheet, and no scripts",
+          {"llms.txt", "index.html", "catalog.json", "graph.json", "statements.jsonl", "assets/site.css",
+           "pages/atlas.html", "pages/atlas.md", "pages/atlas.json", "pages/beta.html", "pages/beta.md",
+           "pages/evil-b-repo.html"} <= set(files) and not any(k.endswith(".js") for k in files)
+          and done["pages"] == 3 and done["written"] == 1)
     check("it lives in the layer's own folder, readable only by me, and no half-built folder is left",
           site == paths.DATA_DIR / "wiki" and stat.S_IMODE(site.stat().st_mode) == 0o700
           and all(stat.S_IMODE(p.stat().st_mode) == 0o600 for p in site.rglob("*") if p.is_file())
           and not [p for p in site.parent.iterdir() if ".new-" in p.name or ".old-" in p.name])
     pages = {k: v for k, v in files.items() if k.endswith(".html")}
-    check("every page has a strict CSP and loads nothing from the network",
-          all('http-equiv="Content-Security-Policy"' in t and "default-src 'none'" in t and "script-src 'self'" in t
+    check("every page has a strict CSP that lets no script run, and loads nothing from the network",
+          all('http-equiv="Content-Security-Policy"' in t and "default-src 'none'" in t and "script-src" not in t
               for t in pages.values())
           and not any(re.search(r'<(script|link)[^>]+(src|href)="(https?:)?//', t) for t in pages.values()))
-    check("no inline script runs: the only inline script is the page's JSON data block",
+    check("plain HTML: the only script element is the page's JSON data block, which never runs",
           all(re.findall(r"<script(?![^>]*\bsrc=)[^>]*>", t) in ([], ['<script type="application/json" id="pwi-page">'])
               for t in pages.values()))
     everything = "\n".join(files.values())
+    markdown = {k: v for k, v in files.items() if k.endswith((".md", ".txt"))}
+    others = "\n".join(v for k, v in files.items() if k not in markdown)
     check("text from the store is escaped everywhere: a claim with markup, a project named with markup",
-          "<script>alert" not in everything and "<img src=x" not in everything and "<b>repo" not in everything
+          "<script>alert" not in others and "<img src=x" not in others and "<b>repo" not in others
           and "&lt;script&gt;alert(1)&lt;/script&gt;" in files["pages/atlas.html"]
           and "evil&lt;b&gt;repo" in files["index.html"])
+    check("and in the Markdown, where every '<' from the store is escaped with a backslash",
+          not any(bare_markup(t) for t in markdown.values()) and "\\<script>alert(1)" in files["pages/atlas.md"]
+          and "evil\\<b>repo" in files["llms.txt"])
     check("links can only be https or pages: a javascript: alias stays text",
           'href="javascript:' not in everything and "javascript:alert(3)" in files["pages/atlas.html"])
     atlas = files["pages/atlas.html"]
@@ -144,26 +158,17 @@ def main():
           and '<a class="wl" href="beta.html">Beta</a>' in atlas
           and '<a href="https://example.com/spec" rel="noopener noreferrer" target="_blank">the spec</a>' in atlas)
     check("each statement carries its label and citations; a cited file links to GitHub at its commit",
-          'data-label="verified"' in atlas
-          and '<span class="label verified"><span class="dot" aria-hidden="true"></span>verified</span>' in atlas
+          'data-label="verified"' in atlas and '<span class="label verified">[verified]</span>' in atlas
           and f'href="https://github.com/acme/atlas/blob/{head["head"]["commit"][:12]}/README.md"' in atlas)
     embedded = re.search(r'<script type="application/json" id="pwi-page">(.*?)</script>', atlas, re.S).group(1)
     check("the page's data is inline and in pages/<id>.json, the same as get_wiki_page returns",
           json.loads(embedded) == json.loads(files["pages/atlas.json"])
           and json.loads(embedded)["content"][0]["blocks"][0]["label"] == "verified")
-    check("generated sections render: decisions as a timeline by month, commitments, where it lives",
-          'class="timeline"' in atlas and f'<span class="month">{D1[:7]}</span>' in atlas
+    check("generated sections render: decisions by month, commitments, where it lives",
+          f'<h3 class="month">{D1[:7]}</h3>' in atlas
           and "Send Ana the design" in atlas and "I owe ana@example.com" in atlas and "acme/atlas" in atlas)
-    graph = json.loads(files["data/graph.js"].split("=", 1)[1].rstrip().rstrip(";"))
-    search = json.loads(files["data/search.js"].split("=", 1)[1].rstrip().rstrip(";"))
-    check("the graph data has every page and the links between them",
-          {n["id"] for n in graph["nodes"]} == {"atlas", "beta", "evil-b-repo"}
-          and {"from": "atlas", "to": "beta"} in graph["edges"])
-    check("the search index has statements as plain words, and pages' key terms",
-          any(e["section"] == "overview" and "offline maps" in e["text"] and "**" not in e["text"] for e in search)
-          and any(e["page"] == "atlas" and "mapas" in e["text"] for e in search))
     check("a confidential project and its claims never reach the site",
-          "vault" not in json.dumps(graph) and "Buy the competitor" not in everything
+          "Buy the competitor" not in everything
           and not any("vault" in k for k in files))
 
     # Diagrams and images --------------------------------------------------------------------
@@ -180,22 +185,47 @@ def main():
           len(images) == 1 and f'<img src="../{images[0]}" alt="The map, from the docs">' in atlas)
     check("the repository map is drawn as a tree", 'class="dg dg-tree"' in atlas and "atlas/" in atlas)
 
-    # The design system ------------------------------------------------------------------------
-    css = files["assets/site.css"]
-    outside_tokens = re.sub(r":root \{.*?\n\}", "", css, flags=re.S)
-    check("colours are tokens: raw colour values appear only where the tokens are defined, light and dark",
-          "--c-canvas: #f3f3f1" in css and "prefers-color-scheme: dark" in css
-          and not re.search(r"#[0-9a-fA-F]{3,8}\b", outside_tokens))
-    check("focus is always visible, and motion respects reduced-motion settings",
-          ":focus-visible" in css and "prefers-reduced-motion" in css)
-    check("pages have the shell: a sidebar with every page, breadcrumbs, and labels as a word beside their colour",
-          'class="sidebar"' in atlas and 'aria-current="page"' in atlas and 'class="crumbs"' in atlas
-          and 'class="dot" aria-hidden="true"></span>verified' in atlas)
-    check("a statement's evidence sits behind a sources button that opens in place",
-          '<details class="sources"><summary aria-label="2 sources">' in atlas)
-    check("the overview is a bento of metrics, the map with a segmented control, what needs attention, and the catalog",
-          all(k in files["index.html"] for k in ('class="panel metrics"', 'class="segmented" role="group"',
-                                                 'aria-pressed="true"', 'class="panel attention-panel"', 'class="panel catalog"')))
+    # Plain HTML for agents -------------------------------------------------------------------
+    check("the site is plain: no scripts, no map, no search; a label reads as a word, sources as text",
+          "<script src" not in "".join(pages.values()) and 'id="graph"' not in atlas and 'id="search"' not in atlas
+          and "Sources: " in atlas and "[verified]" in atlas)
+    check("the index lists every page and says where llms.txt and the JSON are and where to browse it",
+          "llms.txt" in files["index.html"] and "catalog.json" in files["index.html"] and "pwi open" in files["index.html"]
+          and 'href="pages/atlas.html"' in files["index.html"])
+
+    # Formats for agents ---------------------------------------------------------------------
+    llms = files["llms.txt"]
+    check("llms.txt says what the wiki is and its files, and lists every page with its summary, linking its Markdown",
+          llms.startswith("# Work wiki\n\n> ") and "statements.jsonl" in llms and "## Projects" in llms
+          and "- [atlas](pages/atlas.md): Offline maps." in llms and "(pages/beta.md): not written yet" in llms)
+    md = files["pages/atlas.md"]
+    check("a page as Markdown: its title, summary, labels as words, sources, and page links to other .md files",
+          md.startswith("# atlas\n\n> Offline maps.") and "Atlas renders **offline maps**, see [Beta](beta.md)" in md
+          and "[the spec](<https://example.com/spec>)" in md and "[verified] (sources: `atlas@" in md
+          and "- Tiles live in `sqlite` on the device. [verified]" in md and "## Commitments" in md
+          and "Send Ana the design [unconfirmed] (I owe ana@example.com" in md)
+    drawn_files = sorted(k for k in files if k.startswith("diagrams/"))
+    check("each diagram is a file of its own, as SVG with its own style, and as PNG when rsvg-convert is installed",
+          "diagrams/atlas.arch.svg" in drawn_files and "<style>" in files["diagrams/atlas.arch.svg"]
+          and "Tom &amp; &quot;Jerry&quot;" in files["diagrams/atlas.arch.svg"]
+          and (("diagrams/atlas.arch.png" in drawn_files) == bool(shutil.which("rsvg-convert"))))
+    picture = "atlas.arch.png" if shutil.which("rsvg-convert") else "atlas.arch.svg"
+    check("the Markdown shows the diagram as an image and as text, and the HTML links its files",
+          f"(../diagrams/{picture})" in md and "As text:" in md and "→" in md
+          and 'href="../diagrams/atlas.arch.svg">SVG</a>' in atlas and f"![The map, from the docs](../{images[0]})" in md)
+    rows = [json.loads(line) for line in files["statements.jsonl"].splitlines()]
+    check("statements.jsonl has one line per statement, diagram and image, with page, section, label and sources",
+          {(r["page"], r["kind"]) for r in rows} == {("atlas", "statement"), ("atlas", "diagram"), ("atlas", "image")}
+          and any(r["text"].startswith("Atlas renders") and r["label"] == "verified" and r["section"] == "overview"
+                  and r["cites"] and r["md"] == "pages/atlas.md" for r in rows)
+          and any(r["kind"] == "diagram" and r["svg"] == "diagrams/atlas.arch.svg" and r["as_text"] for r in rows)
+          and "<" not in files["statements.jsonl"])
+    graph = json.loads(files["graph.json"])
+    check("graph.json has every page and the links between them; catalog.json says when it was built",
+          {n["id"] for n in graph["nodes"]} == {"atlas", "beta", "evil-b-repo"}
+          and {"from": "atlas", "to": "beta"} in graph["edges"] and json.loads(files["catalog.json"])["built_at"])
+    check("each HTML page names its Markdown and JSON as alternates",
+          '<link rel="alternate" type="text/markdown" href="atlas.md">' in atlas and 'href="atlas.json">JSON</a>' in atlas)
 
     # Rebuilding -------------------------------------------------------------------------------
     check("the service rebuilds only when something changed",
