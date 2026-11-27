@@ -54,7 +54,8 @@ def add_claim(db, claim_id, kind, text, project, status="proposed", **extra):
 
 
 def site_text(folder):
-    return {p.relative_to(folder).as_posix(): p.read_text(encoding="utf-8") for p in folder.rglob("*") if p.is_file()}
+    return {p.relative_to(folder).as_posix(): p.read_text(encoding="utf-8") if not p.parent.name == "images" else ""
+            for p in folder.rglob("*") if p.is_file()}
 
 
 def main():
@@ -73,7 +74,8 @@ def main():
         repo.mkdir(parents=True)
         sh(repo, "git", "init", "-q", "-b", "main")
         sh(repo, "git", "config", "user.email", "me@example.com")
-        (repo / "README.md").write_text(f"# {name}\n\nRenders maps.\n")
+        (repo / "README.md").write_text(f"# {name}\n\nRenders maps.\n\n![Map](map.png)\n")
+        (repo / "map.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"not really a png, but bytes to copy")
         sh(repo, "git", "add", "-A")
         sh(repo, "git", "commit", "-q", "-m", "Initial", GIT_AUTHOR_DATE=f"{D1}T10:00:00+00:00",
            GIT_COMMITTER_DATE=f"{D1}T10:00:00+00:00")
@@ -99,6 +101,15 @@ def main():
             {"text": "Tiles live in `sqlite` on the device.", "style": "bullet", "cites": [{"claim_id": "clm_ver"}]},
             {"text": "Secret detail hidden later.", "style": "bullet", "cites": [{"claim_id": "clm_evil"}]}]}]})
     check("a page to render", saved.get("version") == 1)
+    tricky = 'Tom & "Jerry" say 1 < 2'
+    diagram = {"id": "arch", "type": "architecture", "title": tricky, "caption": "It's <3 & more",
+               "nodes": [{"id": "ui", "label": tricky, "kind": "ui", "page": "beta"}, {"id": "db", "label": "Store", "kind": "store"}],
+               "edges": [{"from": "ui", "to": "db", "label": "reads & writes"}]}
+    drawn = call("propose_wiki_update", {"page": "atlas", "base_version": 1, "reason": "diagram", "sections": [
+        {"id": "how-it-works", "blocks": [{"diagram": diagram, "cites": [readme]},
+                                         {"image": {"repo": "atlas", "commit": head["head"]["commit"][:12], "path": "map.png",
+                                                    "caption": "The map, from the docs"}}]}]})
+    check("and a diagram and an image on it", drawn.get("version") == 2)
 
     # Building ---------------------------------------------------------------------------------
     done = wiki_site.build(db)
@@ -153,6 +164,20 @@ def main():
     check("a confidential project and its claims never reach the site",
           "vault" not in json.dumps(graph) and "Buy the competitor" not in everything
           and not any("vault" in k for k in files))
+
+    # Diagrams and images --------------------------------------------------------------------
+    svg = re.search(r'<figure id="s-\d+" class="diagram".*?</figure>', atlas, re.S).group(0)
+    check("a diagram is drawn inline as SVG from its description, with classes only and no inline style",
+          '<svg xmlns="http://www.w3.org/2000/svg" class="dg dg-architecture"' in svg and "style=" not in svg
+          and "<style" not in svg and 'marker-end="url(#dg-s-' in svg)
+    check("every label in a diagram is escaped: quotes, ampersands and angle brackets",
+          "Tom &amp; &quot;Jerry&quot; say 1 &lt; 2" in svg and 'say 1 < 2' not in svg and "&lt;3 &amp; more" in svg)
+    check("a diagram has a text version, and its nodes link to pages",
+          "<summary>Diagram as text</summary>" in svg and 'data-page="beta"' in svg and "→" in svg)
+    images = [k for k in files if k.startswith("images/")]
+    check("a documentation image is copied into the site, named by its content, and shown with <img>",
+          len(images) == 1 and f'<img src="../{images[0]}" alt="The map, from the docs">' in atlas)
+    check("the repository map is drawn as a tree", 'class="dg dg-tree"' in atlas and "atlas/" in atlas)
 
     # Rebuilding -------------------------------------------------------------------------------
     check("the service rebuilds only when something changed",

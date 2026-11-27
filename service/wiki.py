@@ -17,6 +17,7 @@ import re
 from collections import Counter
 from datetime import date, timedelta
 
+import diagrams
 import reads
 import repos
 import store
@@ -25,6 +26,8 @@ from validate import HTML_TAG, MARKDOWN_LINK, TITLE_CHARS, WIKI_LINK
 from writes import Refused, audit, transaction
 
 PAGE_CHARS = 12000  # compiled text on one page
+PAGE_DIAGRAMS = 4
+REPO_MAP_FOLDERS = 25
 CUSTOM_SECTIONS = 8
 LABEL_ORDER = ("verified", "repo", "unconfirmed")
 LIVE, GONE, HIDDEN = "live", "gone", "hidden"
@@ -161,8 +164,18 @@ class Reader:
             verdict = self.judge(cites.get(st["seq"], []))
             if verdict is None:
                 continue
-            item = {"id": f"s-{st['seq']}", "text": st["text"], "style": st["style"], "label": verdict["label"],
-                    "cites": verdict["cites"]}
+            block = json.loads(st["block"]) if st["block"] else {}
+            if st["kind"] == "diagram":
+                item = {"id": f"s-{st['seq']}", "kind": "diagram",
+                        "diagram": {k: v for k, v in block.items() if k != "warnings"},
+                        "layout_warnings": block.get("warnings", []), "label": verdict["label"], "cites": verdict["cites"]}
+            elif st["kind"] == "image":
+                item = {"id": f"s-{st['seq']}", "kind": "image",
+                        "image": {"repo": verdict["cites"][0].get("repo"), "commit": block["commit"][:12], "path": block["path"]},
+                        "caption": block.get("caption"), "label": verdict["label"], "cites": verdict["cites"]}
+            else:
+                item = {"id": f"s-{st['seq']}", "text": st["text"], "style": st["style"], "label": verdict["label"],
+                        "cites": verdict["cites"]}
             if verdict["gone"]:
                 item["citations_gone"] = verdict["gone"]
             shown.append((item, links.get(st["seq"], [])))
@@ -191,7 +204,8 @@ class Reader:
             blocks = [item for item, _ in shown]
             sections.append({"id": s["section_id"], "heading": s["heading"], "source": "compiled",
                              "summary": s["summary"], "blocks": blocks,
-                             "size_tokens": tokens(sum(len(b["text"]) + 40 for b in blocks)),
+                             "size_tokens": tokens(sum(len(b.get("text") or json.dumps(b.get("diagram") or b.get("image")))
+                                                       + 40 for b in blocks)),
                              "labels": dict(Counter(b["label"] for b in blocks)),
                              "links": sorted({t for _, targets in shown for t in targets})})
         return sections
@@ -304,6 +318,10 @@ class Reader:
             activity = sorted(weeks.values(), key=lambda w: w["week"], reverse=True)
             for w in activity:
                 w["focus_minutes"] = round(w["focus_minutes"])
+            maps = self.repo_map(pid)
+            sections["repo-map"] = (f"{sum(m['files'] for m in maps)} files in {len(maps)} "
+                                    f"{'repository' if len(maps) == 1 else 'repositories'}." if maps else
+                                    "No repository the layer may read.", maps)
             sections["activity"] = (f"{sum(w['commits'] for w in activity)} commits in the last {ACTIVITY_WEEKS} weeks."
                                     if activity else f"No activity in the last {ACTIVITY_WEEKS} weeks.", activity)
         elif kind == "person":
@@ -330,6 +348,33 @@ class Reader:
         return [{"id": sid, "heading": heading, "source": "generated", "summary": sections[sid][0], "items": sections[sid][1],
                  "size_tokens": tokens(len(json.dumps(sections[sid][1], ensure_ascii=False)))}
                 for sid, heading in WIKI_GENERATED[kind].items() if sid in sections]
+
+    def repo_map(self, project_id):
+        """Each repository's top folders at its head, with how many files and which languages: built by code."""
+        maps = []
+        for repo in (r for r in self.repos.values() if r["project_id"] == project_id):
+            head = self.heads.get(repo["locator"])
+            if head is None:
+                continue
+            try:
+                files = [f for f in repos.git(repo["locator"], "ls-tree", "-r", "--name-only", "-z", head["commit"]).split("\0") if f]
+            except Exception:
+                continue
+            folders = {}
+            for f in files:
+                if repos.is_secret(f):
+                    continue
+                top = f.split("/", 1)[0] + ("/" if "/" in f else "")
+                entry = folders.setdefault(top, {"files": 0, "languages": Counter()})
+                entry["files"] += 1
+                ext = f.rsplit(".", 1)[-1].lower() if "." in f.rsplit("/", 1)[-1] else ""
+                if ext and len(ext) <= 5:
+                    entry["languages"][ext] += 1
+            ranked = sorted(folders.items(), key=lambda kv: (not kv[0].endswith("/"), -kv[1]["files"]))[:REPO_MAP_FOLDERS]
+            maps.append({"repo": repo["repo"], "commit": head["commit"][:12], "files": len(files),
+                         "folders": [{"path": name, "files": e["files"],
+                                      "languages": [x for x, _ in e["languages"].most_common(3)]} for name, e in ranked]})
+        return maps
 
     # Tool results --------------------------------------------------------------------
 
@@ -363,7 +408,7 @@ class Reader:
                               (f" for project {project}" if project else "") + "."]
         return result
 
-    def outline(self, page, sections=None):
+    def outline(self, page, sections=None, previews=False):
         v = current(self.db, page["id"]) if page["stored"] else None
         compiled = self.compiled(page["id"], v["version"]) if v else []
         generated = self.generated(page)
@@ -397,6 +442,14 @@ class Reader:
                 if page["kind"] == "project" else ""))
         if sections is not None:
             by_id = {s["id"]: s for s in compiled + generated}
+            if previews:
+                shown = [b for sid in sections if sid in by_id for b in by_id[sid].get("blocks", []) if b.get("kind") == "diagram"]
+                images = [(b["diagram"]["id"], diagrams.preview(b["diagram"])) for b in shown]
+                result["previews"] = [{"diagram": d, "image": n + 1} for n, (d, png) in enumerate(i for i in images if i[1])]
+                result["_images"] = [{"data": png, "mimeType": "image/png"} for _, png in images if png]
+                if shown and not result["_images"]:
+                    gaps.append("The layer can't draw previews here (rsvg-convert isn't installed); the descriptions "
+                                "and layout_warnings are all there is.")
             result["content"] = [{k: val for k, val in by_id[sid].items() if k not in ("links", "size_tokens")}
                                  for sid in sections if sid in by_id]
             missing = [sid for sid in sections if sid not in by_id]
@@ -426,7 +479,7 @@ def get_wiki_page(db, args):
     if page is None:
         return {"found": False, "gaps": [f"There's no wiki page {args['page']}. Call get_wiki_page without page "
                                          "for the catalog of pages."]}
-    return reader.outline(page, args.get("sections"))
+    return reader.outline(page, args.get("sections"), args.get("previews", False))
 
 
 def for_project(db, project_id):
@@ -520,7 +573,8 @@ def stored_sections(db, page_id, version):
             cites = [dict(c) for c in db.execute("SELECT * FROM wiki_citations WHERE statement_seq = ? ORDER BY position",
                                                  (st["seq"],))]
             links = [l["target"] for l in db.execute("SELECT target FROM wiki_links WHERE statement_seq = ?", (st["seq"],))]
-            statements.append({"text": st["text"], "style": st["style"], "cites": cites, "links": links})
+            statements.append({"text": st["text"], "style": st["style"], "cites": cites, "links": links,
+                               "kind": st["kind"], "block": json.loads(st["block"]) if st["block"] else None})
         sections.append({"id": s["section_id"], "heading": s["heading"], "summary": s["summary"], "statements": statements})
     return sections
 
@@ -572,6 +626,43 @@ def check_cites(db, reader, page, block, where, problems):
             problems.append(f"{where}.text links to [[{target}]], but there's no such page. Use an id from the catalog.")
         links.append(target)
     return rows, sorted(set(links))
+
+
+def check_diagram(db, reader, page, block, where, problems):
+    """A diagram block as a statement to store: checked, laid out (for its warnings), with its words for search."""
+    d = block["diagram"]
+    found = diagrams.check(d, f"{where}.diagram")
+    problems += found
+    cites, links = check_cites(db, reader, page, {"text": "", "cites": block.get("cites", []) + diagrams.element_cites(d)},
+                               where, problems)
+    for target in diagrams.page_links(d):
+        if reader.page(target) is None and target != page["id"]:
+            problems.append(f"{where}.diagram links to page {target}, which doesn't exist.")
+    stored = dict(d)
+    if not found:
+        stored["warnings"] = diagrams.render(d)["warnings"]
+    return {"text": diagrams.plain_text(d)[:2000], "style": "paragraph", "cites": cites,
+            "links": sorted(set(links) | set(diagrams.page_links(d))), "kind": "diagram", "block": stored}
+
+
+def check_image(db, image, where, problems):
+    """An image block: a documentation image in a repository Claude may read, at a commit."""
+    repo = repos.by_name(db, image["repo"])
+    sha = repos.resolve(repo["locator"], image["commit"]) if repo else None
+    path = image["path"].strip("/")
+    if sha is None:
+        problems.append(f"{where}.image: {image['repo']} at {image['commit']} isn't a repository and commit you can read.")
+    else:
+        data, why = repos.image_at(repo["locator"], sha, path)
+        if data is None:
+            problems.append(f"{where}.image: {why}")
+    caption = " ".join(image.get("caption", "").split())
+    if HTML_TAG.search(caption):
+        problems.append(f"{where}.image.caption is plain text.")
+    empty = {"claim_id": None, "event_id": None, "page_id": None, "section_id": None}
+    cites = [{**empty, "source_id": repo["id"] if repo else None, "commit_sha": sha, "path": path}]
+    return {"text": caption or path, "style": "paragraph", "cites": cites, "links": [], "kind": "image",
+            "block": {"commit": sha, "path": path, "caption": caption}}
 
 
 def section_ids(db, page):
@@ -631,9 +722,15 @@ def propose_wiki_update(db, args):
             problems.append(f"{where}.id '{sid}' is built by the layer on {kind} pages, so it can't be written.")
         statements = []
         for j, block in enumerate(section["blocks"]):
-            cites, links = check_cites(db, reader, page, block, f"{where}.blocks[{j}]", problems)
-            statements.append({"text": block["text"].strip(), "style": block.get("style", "paragraph"),
-                               "cites": cites, "links": links})
+            spot = f"{where}.blocks[{j}]"
+            if "diagram" in block:
+                statements.append(check_diagram(db, reader, page, block, spot, problems))
+            elif "image" in block:
+                statements.append(check_image(db, block["image"], spot, problems))
+            else:
+                cites, links = check_cites(db, reader, page, block, spot, problems)
+                statements.append({"text": block["text"].strip(), "style": block.get("style", "paragraph"),
+                                   "cites": cites, "links": links, "kind": None, "block": None})
         sent[sid] = {"id": sid, "heading": section.get("heading", "").strip() or None,
                      "summary": section.get("summary", "").strip() or None, "statements": statements}
 
@@ -666,7 +763,13 @@ def propose_wiki_update(db, args):
     custom = [s["id"] for s in merged if s["id"] not in standard]
     if len(custom) > CUSTOM_SECTIONS:
         problems.append(f"The page would have {len(custom)} sections of your own; at most {CUSTOM_SECTIONS}. Fold some together.")
-    chars = sum(len(st["text"]) for s in merged for st in s["statements"])
+    chars = sum(len(st["text"]) for s in merged for st in s["statements"] if not st["kind"])
+    drawn = [st["block"]["id"] for s in merged for st in s["statements"] if st["kind"] == "diagram"]
+    if len(drawn) > PAGE_DIAGRAMS:
+        problems.append(f"The page would have {len(drawn)} diagrams; at most {PAGE_DIAGRAMS}. Keep the ones that explain most.")
+    if len(set(drawn)) != len(drawn):
+        problems.append("Two diagrams on the page share an id: " + ", ".join(sorted({d for d in drawn if drawn.count(d) > 1}))
+                        + ". Each diagram's id is unique on its page.")
     if chars > PAGE_CHARS:
         problems.append(f"The page would hold {chars} characters of compiled text; at most {PAGE_CHARS}. Say it shorter, "
                         "or move detail to a topic page.")
@@ -697,6 +800,14 @@ def propose_wiki_update(db, args):
                "sections_saved": [sid for sid in sent if sid not in removed], "sections_removed": removed,
                "statements_sent": len(new_statements), "labels": dict(labels), "page_chars": chars,
                "page_budget": PAGE_CHARS}
+    sent_diagrams = [st["block"] for st in new_statements if st["kind"] == "diagram"]
+    if sent_diagrams:
+        summary["layout"] = [{"diagram": b["id"], "warnings": b.get("warnings", [])} for b in sent_diagrams]
+        pictures = [diagrams.preview({k: v for k, v in b.items() if k != "warnings"}) for b in sent_diagrams]
+        summary["_images"] = [{"data": png, "mimeType": "image/png"} for png in pictures if png]
+        summary["previews"] = ("each diagram's preview follows, in order; look at it before you're done"
+                               if summary["_images"] else "no previews: the layer can't draw them here (rsvg-convert "
+                               "isn't installed), so rely on the layout warnings")
     if warnings:
         summary["warnings"] = warnings
     if args.get("dry_run"):
@@ -728,8 +839,10 @@ def propose_wiki_update(db, args):
                                      " VALUES (?, ?, ?, ?, ?, ?)",
                                      (page["id"], version, s["id"], n, s["heading"], s["summary"])).lastrowid
             for m, st in enumerate(s["statements"]):
-                statement_seq = db.execute("INSERT INTO wiki_statements (section_seq, position, style, text) VALUES (?, ?, ?, ?)",
-                                           (section_seq, m, st["style"], st["text"])).lastrowid
+                statement_seq = db.execute("INSERT INTO wiki_statements (section_seq, position, style, text, kind, block)"
+                                           " VALUES (?, ?, ?, ?, ?, ?)",
+                                           (section_seq, m, st["style"], st["text"], st["kind"],
+                                            json.dumps(st["block"], ensure_ascii=False) if st["block"] else None)).lastrowid
                 for k, c in enumerate(st["cites"]):
                     db.execute("INSERT INTO wiki_citations (statement_seq, position, claim_id, event_id, source_id, commit_sha,"
                                " path, page_id, section_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",

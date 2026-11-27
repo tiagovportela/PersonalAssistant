@@ -2,7 +2,7 @@
 
 A knowledge base of my work that agents use first and I read too. Claude compiles one page per project, person and recurring topic from what the layer already holds and from the project's Git repositories. Every statement cites its evidence and shows its label. Pages can include diagrams, such as a user journey through a UI, a request across components or a repository's architecture: agents describe them as data, and the layer draws them as SVG. Agents read and write the wiki only through the layer's MCP tools. The layer renders it as a static HTML site with an interactive graph, for me and for agents that only have files.
 
-Steps 1, 2 and 3a of the [build order](#build-order) are built. Step 1: the store, `read_repo`, `get_wiki_page`, `propose_wiki_update`, the wiki in `search`, `get_project` and `get_metrics`, and search misses (`service/wiki.py`, `service/repos.py`). Step 2: the `wiki` instructions, the compile run (`pwi wiki compile`, `service/wiki_compile.py`), the weekly review's wiki step, and the related changes to the end-of-day notes. Step 3a: the static site (`pwi wiki build` and `open`, `service/wiki_site.py`), rebuilt by the service within a minute of a change. The rest of this page is design.
+Steps 1 to 3 of the [build order](#build-order) are built. Step 1: the store, `read_repo`, `get_wiki_page`, `propose_wiki_update`, the wiki in `search`, `get_project` and `get_metrics`, and search misses (`service/wiki.py`, `service/repos.py`). Step 2: the `wiki` instructions, the compile run (`pwi wiki compile`, `service/wiki_compile.py`), the weekly review's wiki step, and the related changes to the end-of-day notes. Step 3a: the static site (`pwi wiki build` and `open`, `service/wiki_site.py`), rebuilt by the service within a minute of a change. Step 3b: diagrams (`service/diagrams.py`) and documentation images, in pages, previews and the site. The rest of this page is design.
 
 ## Why
 
@@ -428,7 +428,7 @@ A new Wiki section:
 
 ## The store (schema 8)
 
-`schema/migrations/008_wiki.sql`, built in step 1; `009_wiki_runs.sql` adds the compile runs in step 2. The diagram and image tables come with step 3.
+`schema/migrations/008_wiki.sql`, built in step 1; `009_wiki_runs.sql` adds the compile runs in step 2; `010_wiki_diagrams.sql` adds diagrams and images in step 3b. They aren't tables of their own, as first planned: a diagram or image is a statement with a `kind` and a `block` (its description, or its file), so citations, labels, hiding, links and search are the statements', with no new table to keep in step. A diagram's element citations are stored with its own, so a confidential one hides the whole diagram.
 
 | Table | Holds |
 |---|---|
@@ -436,8 +436,8 @@ A new Wiki section:
 | `wiki_versions` | page, version, summary, `key_terms`, `built_from` (JSON: the commit read in each repository, by source id), written_by (`claude` or `me`), reason, written_at |
 | `wiki_sections` | page, version, section id, position, heading, summary |
 | `wiki_statements` | section, position, style, text |
-| `wiki_diagrams` (step 3) | page, version, section, position, id, type, title, caption, the description (JSON), the last layout warnings |
-| `wiki_images` (step 3) | page, version, section, position, repo, commit, path, caption |
+| `wiki_diagrams` (planned; built as statements instead, see above) | page, version, section, position, id, type, title, caption, the description (JSON), the last layout warnings |
+| `wiki_images` (planned; built as statements instead) | page, version, section, position, repo, commit, path, caption |
 | `wiki_citations` | a statement, or a diagram (optionally one of its nodes, edges, steps or messages); and one of: claim, event, commit + repo (+ path), page (+ section) |
 | `wiki_links` | statement, target page. A link's type is the target page's kind, and links count only from statements Claude may see. |
 | `wiki_notes` | page, my notes, changed_at |
@@ -527,7 +527,7 @@ After two weeks of real use, a wiki check, like the 5-day evaluation:
    - related changes 1 to 4.
 3. **The static site**, in two parts:
    - 3a (built): `pwi wiki build` and `open`; the renderer and its injection tests; the graph, drawn by our own code instead of a library; search, timelines, and the automatic rebuild.
-   - 3b: diagrams (their checks in `propose_wiki_update`, `service/diagrams.py` with its layouts and injection tests, PNG previews and `dry_run`, and the generated `repo-map` and `activity` diagrams), and documentation images (in `read_repo`, as `image` blocks, and copied into the site).
+   - 3b (built): diagrams (their checks in `propose_wiki_update`, `service/diagrams.py` with its layouts and injection tests, PNG previews and `dry_run`, and the generated `repo-map` and `activity` diagrams), and documentation images (in `read_repo`, as `image` blocks, and copied into the site).
 4. **Upkeep:**
    - `wiki_lint`;
    - the frontend's Wiki section, and the two new retention kinds on its Retention page;
@@ -544,9 +544,9 @@ After two weeks of real use, a wiki check, like the 5-day evaluation:
 - **Bilingual key terms.** Whether they cut search misses enough, measured by the misses themselves.
 - **Cost of a compile run** per page on the Team account, and whether 5 pages a run is the right cap.
 - **Labels.** Whether best-of-citations is the right label rule, or the weakest citation should win.
-- **Diagram layout.** Whether a standard-library layered layout is readable at 20 to 30 nodes, or Graphviz is needed for layout. Also whether text widths estimated from character counts keep labels inside their boxes.
+- **Diagram layout: checked on samples of every type.** Layered layout with each top-level group laid out as its own block side by side, so a group's box never covers another group's nodes; two-way edges drawn apart; labels with a halo. Graphviz hasn't been needed. Text widths are estimated, so labels are wrapped and capped at 60 characters. Large diagrams scroll inside their frame rather than zoom.
 - **Diagram types.** Whether seven types cover what agents want to draw, or some agents keep forcing a diagram into the wrong type.
-- **Images in tool results.** That Claude Desktop's Linux beta and headless Claude Code both pass MCP image results to the model. Until now every result was one text block, so this is a new convention for the layer's results.
+- **Images in tool results.** That Claude Desktop's Linux beta and headless Claude Code both pass MCP image results to the model. Until now every result was one text block, so this is a new convention for the layer's results. `rsvg-convert` is optional and still needs its third-party review (brief §10) before it's installed on the laptop; without it, agents get the layout warnings and no previews.
 - **Previews against the site.** `rsvg-convert` uses the system's fonts and the browser its own, so a preview can differ slightly from the page. Check that the difference doesn't hide problems such as cut labels.
 
 ## Background

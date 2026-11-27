@@ -19,6 +19,7 @@ a minute of any change the wiki shows (a page, a claim, a label, a deletion, ret
 stays close to the store. It lives in the layer's own folder (700, files 600), not in the vault.
 """
 
+import hashlib
 import html
 import json
 import os
@@ -27,6 +28,7 @@ import shutil
 from collections import defaultdict
 from pathlib import Path
 
+import diagrams
 import paths
 import repos
 import store
@@ -127,7 +129,8 @@ def search_index(pages):
                         "text": " ".join(filter(None, [page.get("summary"), " ".join(page.get("key_terms", []))]))})
         for s in page.get("content", []):
             if s["source"] == "compiled":
-                text = " ".join(plain(b["text"]) for b in s["blocks"])
+                text = " ".join(plain(b["text"]) if "text" in b else diagrams.plain_text(b["diagram"]) if "diagram" in b
+                                else b.get("caption") or b["image"]["path"] for b in s["blocks"])
             else:
                 text = " ".join(str(i.get("text") or i.get("title") or i.get("person") or i.get("value") or "")
                                 for i in s.get("items", []))
@@ -176,11 +179,32 @@ def cite_html(cite, github):
     return ""
 
 
-def compiled_html(section, known, github):
+def figure_html(b, cites, images):
+    """A diagram, drawn here from its description, or an image copied into the site."""
+    if b["kind"] == "diagram":
+        d = b["diagram"]
+        drawn = diagrams.render(d, pid=f"dg-{b['id']}")
+        lines = "".join(f"<li>{esc(line)}</li>" for line in diagrams.as_text(d))
+        return (f'<figure id="{esc(b["id"])}" class="diagram" data-label="{esc(b["label"])}" data-diagram="{esc(d["id"])}">'
+                f'<div class="dg-scroll">{drawn["svg"]}</div><figcaption><strong>{esc(d["title"])}</strong>'
+                + (f" · {esc(d['caption'])}" if d.get("caption") else "") + f" {badge(b['label'])}"
+                f'<span class="cites">{cites}</span></figcaption>'
+                f'<details><summary>Diagram as text</summary><ul>{lines}</ul></details></figure>')
+    name = images.get((b["image"]["repo"], b["image"]["commit"], b["image"]["path"]))
+    picture = (f'<img src="../images/{esc(name)}" alt="{esc(b.get("caption") or b["image"]["path"])}">' if name
+               else f'<p class="empty">{esc(b["image"]["path"])} couldn\'t be copied.</p>')
+    return (f'<figure id="{esc(b["id"])}" class="image" data-label="{esc(b["label"])}">{picture}<figcaption>'
+            f'{esc(b.get("caption") or "")} {badge(b["label"])}<span class="cites">{cites}</span></figcaption></figure>')
+
+
+def compiled_html(section, known, github, images=None):
     items = []
     for b in section["blocks"]:
-        tag = "li" if b["style"] == "bullet" else "p"
         cites = "".join(cite_html(c, github) for c in b["cites"])
+        if b.get("kind") in ("diagram", "image"):
+            items.append(figure_html(b, cites, images or {}))
+            continue
+        tag = "li" if b["style"] == "bullet" else "p"
         items.append(f'<{tag} id="{esc(b["id"])}" class="statement" data-label="{esc(b["label"])}" '
                      f'data-cites="{esc(json.dumps(b["cites"], ensure_ascii=False))}">'
                      f'{inline(b["text"], known, "")} {badge(b["label"])}<span class="cites">{cites}</span></{tag}>')
@@ -224,6 +248,15 @@ def generated_html(section, known):
             for m, cs in sorted(months.items(), reverse=True)) + "</ol>"
     if sid in ("commitments", "open-work"):
         return '<ul class="claims">' + "".join(claim_line(c) for c in items) + "</ul>"
+    if sid == "repo-map":
+        out = []
+        for m in items:
+            entries = [{"path": f"{m['repo']}/", "role": f"{m['files']} files at {m['commit'][:8]}"}]
+            entries += [{"path": f"{m['repo']}/{f['path']}", "role": f"{f['files']} file{'s' if f['files'] != 1 else ''}"
+                         + (f" · {', '.join(f['languages'])}" if f["languages"] else "")} for f in m["folders"]]
+            d = {"id": f"map-{m['repo']}", "type": "tree", "title": f"{m['repo']} at {m['commit'][:8]}", "entries": entries}
+            out.append(f'<div class="dg-scroll">{diagrams.render(d, pid="map-" + m["repo"])["svg"]}</div>')
+        return "".join(out)
     if sid == "activity":
         top = max([w["commits"] for w in items] + [1])
         return '<table class="activity"><tr><th>Week</th><th>Commits</th><th></th><th>Focus</th></tr>' + "".join(
@@ -244,7 +277,7 @@ def generated_html(section, known):
     return "<ul>" + "".join(lines) + "</ul>"
 
 
-def page_html(page, known, github):
+def page_html(page, known, github, images=None):
     root = "../"
     stale = page.get("stale", {})
     parts = [head(f"{page['title']} · Work wiki", root),
@@ -265,7 +298,7 @@ def page_html(page, known, github):
     if toc:
         parts.append(f'<nav class="toc"><ul>{toc}</ul></nav>\n')
     for s in page.get("content", []):
-        body = compiled_html(s, known, github) if s["source"] == "compiled" else generated_html(s, known)
+        body = compiled_html(s, known, github, images) if s["source"] == "compiled" else generated_html(s, known)
         parts.append(f'<section id="{esc(s["id"])}" data-source="{esc(s["source"])}">\n<h2>{esc(s["heading"])}</h2>\n'
                      + (f'<p class="section-summary">{esc(s.get("summary"))}</p>\n'
                         if s["source"] == "generated" and s.get("summary") and s.get("items") else "")
@@ -314,6 +347,33 @@ def write(path, text):
     os.chmod(path, 0o600)
 
 
+def copy_images(db, pages, folder):
+    """The pages' documentation images, copied from their repositories at the cited commit, named by content."""
+    names = {}
+    for page in pages.values():
+        for s in page.get("content", []):
+            for b in s.get("blocks", []):
+                if b.get("kind") != "image":
+                    continue
+                key = (b["image"]["repo"], b["image"]["commit"], b["image"]["path"])
+                repo = repos.by_name(db, key[0])
+                if repo is None or key in names:
+                    continue
+                try:
+                    data = repos.git_bytes(repo["locator"], "cat-file", "blob", f"{key[1]}:{key[2]}")
+                except Exception:
+                    continue
+                kind = repos.image_type(key[2])
+                if not kind:
+                    continue
+                name = hashlib.sha256(data).hexdigest()[:32] + "." + kind.split("/")[1].replace("jpeg", "jpg")
+                folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+                (folder / name).write_bytes(data)
+                os.chmod(folder / name, 0o600)
+                names[key] = name
+    return names
+
+
 def build(db, target=None):
     """Builds the site into a new folder and swaps it in. Returns what was built."""
     target = Path(target or SITE_DIR)
@@ -324,8 +384,9 @@ def build(db, target=None):
     shutil.rmtree(fresh, ignore_errors=True)
     fresh.mkdir(mode=0o700, parents=True)
     write(fresh / "index.html", index_html(catalog))
+    images = copy_images(db, pages, fresh / "images")
     for page_id, page in pages.items():
-        write(fresh / "pages" / f"{page_id}.html", page_html(page, known, github))
+        write(fresh / "pages" / f"{page_id}.html", page_html(page, known, github, images))
         write(fresh / "pages" / f"{page_id}.json", data(page, indent=1))
     write(fresh / "catalog.json", data({"pages": catalog}, indent=1))
     write(fresh / "data" / "catalog.js", f"window.PWI_CATALOG = {data(catalog)};\n")

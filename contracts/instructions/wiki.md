@@ -25,7 +25,9 @@ Project pages:
 
 Person pages have `role`: role, team, and what we work on together. Work facts only, nothing personal. Topic pages have `summary`, `key-facts` and `open-questions`; make one with `new` when a theme recurs across at least two projects, and link them.
 
-The layer builds the generated sections itself (decisions, commitments, open work, people, activity, mentioned in): don't repeat them. Add a section of your own only when none of these fits, at most 8 a page.
+**Diagrams and images.** A block can be a diagram instead of text: describe it (`type`, `nodes`, `edges`...) and the layer draws it. Draw when relations or order matter more than prose: a user's journey through a UI, a request across components (sequence), a repository's architecture, a lifecycle (state). One idea per diagram, about 20 nodes at most, named as the repository names them, with a caption saying what to notice. Check its layout warnings, and its preview when you can see images; fix crossings and cut labels. Keep node ids across versions. A block can also be an image the docs link to: look at it with `read_repo` first. At most 4 diagrams a page.
+
+The layer builds the generated sections itself (decisions, commitments, open work, people, repository map, activity, mentioned in): don't repeat them. Add a section of your own only when none of these fits, at most 8 a page.
 
 ## Rules
 

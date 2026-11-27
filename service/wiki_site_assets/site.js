@@ -55,6 +55,33 @@
     box.addEventListener("keydown", function (e) { if (e.key === "Escape") { box.value = ""; search(); } });
   }
 
+  // Diagrams: hovering a node highlights its edges; a node linked to a page opens it.
+  document.querySelectorAll("svg.dg").forEach(function (dg) {
+    dg.querySelectorAll(".dg-node").forEach(function (node) {
+      var id = node.getAttribute("data-node");
+      node.addEventListener("mouseenter", function () {
+        dg.classList.add("focused");
+        node.classList.add("near");
+        dg.querySelectorAll(".dg-edge").forEach(function (e) {
+          var on = e.getAttribute("data-from") === id || e.getAttribute("data-to") === id;
+          e.classList.toggle("near", on);
+          if (on) {
+            [e.getAttribute("data-from"), e.getAttribute("data-to")].forEach(function (other) {
+              dg.querySelectorAll(".dg-node").forEach(function (n) { if (n.getAttribute("data-node") === other) n.classList.add("near"); });
+            });
+          }
+        });
+      });
+      node.addEventListener("mouseleave", function () {
+        dg.classList.remove("focused");
+        dg.querySelectorAll(".near").forEach(function (n) { n.classList.remove("near"); });
+      });
+      if (node.getAttribute("data-page")) {
+        node.addEventListener("click", function () { window.location.href = pageUrl(node.getAttribute("data-page")); });
+      }
+    });
+  });
+
   // The graph ----------------------------------------------------------------------------------------
   var svg = document.getElementById("graph");
   var data = window.PWI_GRAPH || { nodes: [], edges: [] };

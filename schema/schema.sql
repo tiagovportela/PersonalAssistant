@@ -1,4 +1,4 @@
--- Personal Work Intelligence layer: SQLite schema (schema version 9).
+-- Personal Work Intelligence layer: SQLite schema (schema version 10).
 -- A store made by an older version is upgraded by the files in migrations/.
 --
 -- Times are UTC text, 'YYYY-MM-DDTHH:MM:SSZ'. Ids that come from a source are
@@ -12,7 +12,7 @@
 PRAGMA journal_mode = WAL;
 
 CREATE TABLE schema_version (version INTEGER NOT NULL) STRICT;
-INSERT INTO schema_version VALUES (9);
+INSERT INTO schema_version VALUES (10);
 
 -- Sources: each allowlisted repository, folder or profile ------------------
 
@@ -483,7 +483,9 @@ CREATE TABLE wiki_statements (
     section_seq INTEGER NOT NULL REFERENCES wiki_sections(seq) ON DELETE CASCADE,
     position    INTEGER NOT NULL,
     style       TEXT NOT NULL CHECK (style IN ('paragraph', 'bullet')),
-    text        TEXT NOT NULL
+    text        TEXT NOT NULL,                  -- a diagram's or image's words, for search
+    kind        TEXT CHECK (kind IS NULL OR kind IN ('diagram', 'image')),  -- NULL: a statement
+    block       TEXT CHECK (block IS NULL OR json_valid(block))  -- a diagram's description, or an image's file
 ) STRICT;
 CREATE INDEX wiki_statements_by_section ON wiki_statements (section_seq, position);
 

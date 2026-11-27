@@ -11,7 +11,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import struct
 import time
+import zlib
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -44,6 +46,15 @@ def check(label, condition):
 
 def sh(cwd, *args, **env):
     return subprocess.run(args, cwd=cwd, check=True, capture_output=True, env={**os.environ, **env}).stdout.decode().strip()
+
+
+def png(width=4, height=3):
+    """A small, valid PNG."""
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    rows = b"".join(b"\x00" + b"\x2f\x5d\x8a" * width for _ in range(height))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
 
 
 def write(repo, files, subject, day):
@@ -99,7 +110,9 @@ def main():
         "README.md": f"# Atlas\n\nAtlas renders offline maps for field teams.\n\nDeploy token: {TOKEN}\n",
         "CLAUDE.md": "Run the tests with make test.\n",
         "package.json": '{"name": "atlas", "dependencies": {"maplibre-gl": "4.7.1"}}\n',
-        "docs/architecture.md": "Tiles are cached in SQLite on the device; the server only builds them.\n",
+        "docs/architecture.md": "Tiles are cached in SQLite on the device; the server only builds them.\n\n![Architecture](arch.png)\n",
+        "docs/arch.png": png(),
+        "data.bin": b"\x00\x01binary\x00" * 20,
         "docs/decisions/0001-sqlite.md": "We chose SQLite for the tile cache.\n",
         ".env": "API_KEY=do-not-read-this-value\n",
         "deploy/secrets.yaml": "password: do-not-read-this-either\n",
@@ -131,7 +144,7 @@ def main():
           head == first and overview["branch"] == "main" and "offline maps" in overview["readme"]["text"]
           and [f["path"] for f in overview["agent_files"]] == ["CLAUDE.md"]
           and [f["path"] for f in overview["manifests"]] == ["package.json"]
-          and {d["path"] for d in overview["docs"]} == {"docs/architecture.md", "docs/decisions/0001-sqlite.md"}
+          and {d["path"] for d in overview["docs"]} == {"docs/architecture.md", "docs/arch.png", "docs/decisions/0001-sqlite.md"}
           and any(t["path"] == "src/" and "tiles/" in t["entries"] for t in overview["tree"]))
     check("read_repo redacts secrets in what it returns", TOKEN not in json.dumps(overview)
           and "[REDACTED]" in overview["readme"]["text"])
@@ -149,7 +162,7 @@ def main():
           and "secrets" in call("read_repo", {"project": "atlas", "path": "deploy/secrets.yaml"})["gaps"][0]
           and "do-not-read" not in json.dumps(call("read_repo", {"project": "atlas", "path": "deploy"})))
     check("read_repo doesn't return binary files, and lists a folder's files",
-          "binary" in call("read_repo", {"project": "atlas", "path": "logo.png"})["gaps"][0]
+          "binary" in call("read_repo", {"project": "atlas", "path": "data.bin"})["gaps"][0]
           and {e["path"] for e in call("read_repo", {"project": "atlas", "path": "src"})["folder"]}
           == {"src/app.py", "src/tiles/"})
     (repos["atlas"] / "notes.md").write_text("Untracked notes\n")
@@ -201,7 +214,7 @@ def main():
     ids = [s["id"] for s in page["sections"]]
     check("the outline lists compiled sections first, then the generated ones, with summaries and labels",
           ids == ["overview", "status", "why", "setup", "decisions", "commitments", "open-work", "people",
-                  "where-it-lives", "activity"]
+                  "where-it-lives", "repo-map", "activity"]
           and page["sections"][0]["summary"] == "What Atlas is." and page["sections"][0]["labels"] == {"repo": 1, "verified": 1,
                                                                                                     "unconfirmed": 1}
           and page["not_written"] == ["how-it-works", "lessons"]
@@ -270,7 +283,8 @@ def main():
     db.execute("DELETE FROM labels WHERE item_id = 'clm_ver'")
 
     # Staleness ---------------------------------------------------------------------------------
-    later = write(repos["atlas"], {"docs/architecture.md": "Tiles are cached in SQLite and pre-warmed at night.\n"},
+    later = write(repos["atlas"], {"docs/architecture.md": "Tiles are cached in SQLite and pre-warmed at night.\n\n"
+                                                           "![Architecture](arch.png)\n"},
                   "Pre-warm the tile cache", D2)
     stale = call("get_wiki_page", {"page": "atlas"})["stale"]
     check("a page is stale when its repository moved on, and says how far, docs included",
@@ -319,6 +333,60 @@ def main():
           [p["page"] for p in call("get_wiki_page", {"kind": "person"})["pages"]] == ["ana-silva"]
           and {p["page"] for p in call("get_wiki_page", {"project": "beta"})["pages"]} == {"beta", "offline-maps"})
 
+    # Diagrams and images ------------------------------------------------------------------------
+    raw = layer.call_tool("read_repo", {"project": "atlas", "path": "docs/arch.png"})
+    seen = json.loads(raw["content"][0]["text"].split("\n", 1)[1].rsplit("\n", 1)[0])
+    check("read_repo shows a documentation image as an image, and says it isn't redacted",
+          seen["image"]["media_type"] == "image/png" and "can't be redacted" in seen["note"]
+          and raw["content"][1]["type"] == "image" and raw["content"][1]["mimeType"] == "image/png")
+    check("an image the docs don't link to isn't shown",
+          "isn't linked from the README or the docs" in call("read_repo", {"project": "atlas", "path": "logo.png"})["gaps"][0])
+    sequence = {"id": "tile-request", "type": "sequence", "title": "A tile request", "caption": "Tiles come from the cache first.",
+                "participants": [{"id": "app", "label": "Map view", "kind": "ui"}, {"id": "cache", "label": "Tile cache", "kind": "store"},
+                                 {"id": "server", "label": "Tile server", "page": "beta"}],
+                "messages": [{"from": "app", "to": "cache", "label": "get tile"}, {"from": "cache", "to": "app", "label": "tile", "kind": "reply"},
+                             {"from": "app", "to": "server", "label": "missing tiles", "kind": "async"}]}
+    blocks = [{"text": "A map view asks the cache before the server.", "cites": [readme]},
+              {"diagram": sequence, "cites": [readme]},
+              {"image": {"repo": "atlas", "commit": first[:12], "path": "docs/arch.png", "caption": "The architecture, as drawn in the docs."}}]
+    drawn = call("propose_wiki_update", {"page": "atlas", "base_version": 2, "reason": "how it works",
+                                         "sections": [{"id": "how-it-works", "blocks": blocks}]})
+    check("a diagram and a documentation image are saved as blocks, with the diagram's layout warnings",
+          drawn.get("version") == 3 and drawn["layout"] == [{"diagram": "tile-request", "warnings": []}])
+    raw = layer.call_tool("propose_wiki_update", {"page": "atlas", "base_version": 3, "reason": "again", "dry_run": True,
+                                                  "sections": [{"id": "how-it-works", "blocks": blocks}]})
+    if __import__("diagrams").can_preview():
+        check("and a PNG preview of each diagram follows the result, for an agent that reads images",
+              [c["type"] for c in raw["content"]] == ["text", "image"] and raw["content"][1]["mimeType"] == "image/png")
+    else:
+        print("skip PNG previews: rsvg-convert isn't installed")
+    page = call("get_wiki_page", {"page": "atlas", "sections": ["how-it-works", "repo-map"]})
+    shown = page["content"][0]["blocks"]
+    check("get_wiki_page returns a diagram as its description, never SVG, and an image as its file and caption",
+          [b.get("kind") for b in shown] == [None, "diagram", "image"] and shown[1]["diagram"]["type"] == "sequence"
+          and "<svg" not in json.dumps(page) and shown[1]["label"] == "repo"
+          and shown[2]["image"] == {"repo": "atlas", "commit": first[:12], "path": "docs/arch.png"} and shown[2]["label"] == "repo")
+    check("the generated repository map lists each repository's top folders, files and languages",
+          page["content"][1]["items"][0]["repo"] == "atlas"
+          and any(f["path"] == "docs/" and "md" in f["languages"] for f in page["content"][1]["items"][0]["folders"])
+          and not any(".env" in f["path"] for f in page["content"][1]["items"][0]["folders"]))
+    bad = dict(sequence, messages=[{"from": "app", "to": "nowhere", "label": "x"}],
+               participants=[{"id": "app", "label": "<b>Map</b>"}])
+    refused = call("propose_wiki_update", {"page": "atlas", "base_version": 3, "reason": "bad", "sections": [
+        {"id": "lessons", "blocks": [{"diagram": bad, "cites": [readme]},
+                                     {"diagram": {"id": "f", "type": "flow", "title": "F", "messages": []}, "cites": [readme]},
+                                     {"image": {"repo": "atlas", "commit": first[:12], "path": "logo.png"}}]}]}).get("error", "")
+    check("a diagram is checked before it's saved: unknown ends, markup in labels, fields of another type, images the docs don't link",
+          "'nowhere' isn't a participant id" in refused and "plain text" in refused and "isn't used by flow diagrams" in refused
+          and "isn't linked from the README" in refused)
+    many = [{"diagram": dict(sequence, id=f"d{n}"), "cites": [readme]} for n in range(4)]
+    check("a page holds at most 4 diagrams",
+          "at most 4" in call("propose_wiki_update", {"page": "atlas", "base_version": 3, "reason": "many",
+                                                      "sections": [{"id": "lessons", "blocks": many}]}).get("error", ""))
+    check("search finds a diagram by its words",
+          any(r["item_type"] == "wiki" and r.get("section") == "how-it-works"
+              for r in call("search", {"query": "tile server cache", "kinds": ["wiki"]})["results"]))
+
     # Search, get_project, metrics -------------------------------------------------------------
     hits = [r for r in call("search", {"query": "pre-warmed field teams"})["results"] if r["item_type"] == "wiki"]
     check("search finds wiki sections, one result per section, with labels",
@@ -338,7 +406,7 @@ def main():
     project = call("get_project", {"project": "atlas"})
     check("get_project shows the project's wiki page: written sections, and whether it's stale",
           project["wiki"]["page"] == "atlas" and project["wiki"]["compiled"] is True
-          and [s["id"] for s in project["wiki"]["sections"]] == ["overview", "status", "setup"]
+          and [s["id"] for s in project["wiki"]["sections"]] == ["overview", "status", "how-it-works", "setup"]
           and project["wiki"]["stale"]["is_stale"] is True
           and call("get_project", {"project": "beta"})["wiki"]["compiled"] is False)
     wiki_metrics = call("get_metrics")["wiki"]
@@ -353,7 +421,7 @@ def main():
     counts = retention.run(paths.STORE_PATH, now=future)
     versions = [r[0] for r in db.execute("SELECT version FROM wiki_versions WHERE page_id = 'atlas'")]
     check("retention deletes past wiki versions and old search misses, never a page's current version",
-          versions == [2] and counts["wiki_versions"] == 1 and counts["search_misses"] == 2
+          versions == [3] and counts["wiki_versions"] == 2 and counts["search_misses"] == 2
           and db.execute("SELECT COUNT(*) FROM wiki_pages").fetchone()[0] == 3)
     check("foreign keys still hold, and the wiki's search indexes are consistent",
           db.execute("PRAGMA foreign_key_check").fetchall() == []

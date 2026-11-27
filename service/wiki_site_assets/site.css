@@ -66,6 +66,34 @@ a.cite { color: var(--accent); }
 .graph.focused .node { opacity: 0.25; } .graph.focused .node.near { opacity: 1; }
 .graph.focused line { opacity: 0.2; } .graph line.near { stroke: var(--accent); opacity: 1; }
 .hidden { display: none; }
+/* Diagrams: drawn by service/diagrams.py with classes only. */
+figure { margin: 16px 0; }
+figure figcaption { color: var(--muted); font-size: 0.9rem; margin-top: 6px; }
+figure.image img { max-width: 100%; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.dg-scroll { overflow: auto; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.dg-scroll svg { display: block; max-width: none; }
+details { font-size: 0.88rem; color: var(--muted); margin-top: 4px; }
+.dg text { font: 13px system-ui, sans-serif; fill: var(--fg); text-anchor: middle; }
+.dg .start { text-anchor: start; }
+.dg-node rect, .dg-node polygon, .dg-node path { fill: var(--card); stroke: var(--project); stroke-width: 1.5; }
+.dg-node.decision polygon { stroke: var(--topic); }
+.dg-node.store path, .dg-node.data polygon { stroke: var(--person); }
+.dg-node.external rect { stroke-dasharray: 5 4; }
+.dg-node.pain rect { stroke: var(--disputed); }
+.dg-pain { fill: var(--disputed); } .dg .dg-pain-mark { fill: #fff; font-weight: 700; }
+.dg-edge { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.dg-edge.async, .dg-edge.reply { stroke-dasharray: 6 4; } .dg-edge.data { stroke: var(--person); }
+.dg-arrowhead { fill: var(--muted); }
+.dg .dg-edge-label, .dg .dg-note, .dg .dg-result, .dg .dg-role, .dg .dg-date { font-size: 11px; fill: var(--muted); }
+.dg .dg-edge-label { paint-order: stroke; stroke: var(--card); stroke-width: 4px; stroke-linejoin: round; }
+.dg-group rect { fill: none; stroke: var(--topic); stroke-dasharray: 4 3; }
+.dg .dg-group-label, .dg .dg-lane-label { text-anchor: start; font-size: 12px; fill: var(--topic); }
+.dg-lane rect { fill: var(--bg); stroke: none; }
+.dg-lifeline, .dg-tree-line, .dg-tick { stroke: var(--line); stroke-dasharray: 4 4; fill: none; }
+.dg-axis { stroke: var(--muted); stroke-width: 2; } .dg-node.item circle { fill: var(--project); }
+.dg-node[data-page] { cursor: pointer; }
+.dg.focused .dg-node { opacity: 0.35; } .dg.focused .dg-node.near { opacity: 1; }
+.dg.focused .dg-edge { opacity: 0.25; } .dg .dg-edge.near { stroke: var(--accent); opacity: 1; }
 @media (max-width: 640px) {
   .graph.full { height: 420px; } .home { font-size: 0.95rem; } h1 { font-size: 1.5rem; }
 }
