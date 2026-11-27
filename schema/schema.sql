@@ -1,4 +1,4 @@
--- Personal Work Intelligence layer: SQLite schema (schema version 8).
+-- Personal Work Intelligence layer: SQLite schema (schema version 9).
 -- A store made by an older version is upgraded by the files in migrations/.
 --
 -- Times are UTC text, 'YYYY-MM-DDTHH:MM:SSZ'. Ids that come from a source are
@@ -12,7 +12,7 @@
 PRAGMA journal_mode = WAL;
 
 CREATE TABLE schema_version (version INTEGER NOT NULL) STRICT;
-INSERT INTO schema_version VALUES (8);
+INSERT INTO schema_version VALUES (9);
 
 -- Sources: each allowlisted repository, folder or profile ------------------
 
@@ -547,3 +547,18 @@ END;
 CREATE TRIGGER wiki_versions_fts_delete AFTER DELETE ON wiki_versions BEGIN
     DELETE FROM wiki_pages_fts WHERE rowid = OLD.seq;
 END;
+
+-- The wiki's compile runs: one headless Claude run per page, after the end-of-day agent or when I
+-- ask (service/wiki_compile.py). Kept like the agent's runs: which page and why, never its content.
+CREATE TABLE wiki_runs (
+    id             INTEGER PRIMARY KEY,
+    page_id        TEXT NOT NULL,               -- no foreign key: a project's page may not be written yet
+    reason         TEXT NOT NULL,               -- why it was picked: stale and why, not written yet, asked
+    started_at     TEXT NOT NULL,
+    finished_at    TEXT,
+    status         TEXT NOT NULL CHECK (status IN ('running', 'ok', 'failed')),
+    version_before INTEGER NOT NULL DEFAULT 0,
+    version_after  INTEGER,
+    detail         TEXT                         -- turns and duration, or the error
+) STRICT;
+CREATE INDEX wiki_runs_by_page ON wiki_runs (page_id, started_at);

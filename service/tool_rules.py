@@ -7,6 +7,9 @@ import re
 
 from tools import APPROVAL
 
+# The layer's tools the end-of-day agent doesn't get: the wiki has its own run (wiki_compile.py).
+NOT_FOR_EOD = {"propose_wiki_update"}
+
 # Words in a tool's name. Allowed: at least one reading word and no changing word; anything else is denied.
 READING = {"get", "list", "search", "read", "fetch", "find", "query", "view", "download", "lookup", "describe",
            "retrieve"}
@@ -45,7 +48,7 @@ def classify(names, overrides=None):
                 blocked.append(name)
             continue
         if name.startswith("mcp__pwi__"):
-            ok = name.removeprefix("mcp__pwi__") not in APPROVAL
+            ok = name.removeprefix("mcp__pwi__") not in APPROVAL | NOT_FOR_EOD
         elif name.startswith("mcp__"):
             ok = reads_only(name.removeprefix("mcp__").split("__", 1)[-1])
         else:

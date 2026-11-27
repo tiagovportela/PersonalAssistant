@@ -217,7 +217,7 @@ ALTER TABLE claim_versions DROP COLUMN counterparty;
 DROP TABLE review_items; DROP TABLE review_messages; DROP TABLE review_batches; DROP TABLE eod_runs;
 DROP VIEW wiki_current; DROP TABLE wiki_links; DROP TABLE wiki_citations; DROP TABLE wiki_statements;
 DROP TABLE wiki_sections; DROP TABLE wiki_notes; DROP TABLE wiki_versions; DROP TABLE wiki_pages;
-DROP TABLE wiki_fts; DROP TABLE wiki_pages_fts; DROP TABLE search_misses;
+DROP TABLE wiki_fts; DROP TABLE wiki_pages_fts; DROP TABLE search_misses; DROP TABLE wiki_runs;
 DELETE FROM retention WHERE item_type IN ('wiki_version', 'search_miss');
 UPDATE schema_version SET version = 1;
 """
@@ -251,6 +251,7 @@ def test_migration():
         check("the upgrade adds the wiki, search misses, and their retention and audit",
               db.execute("select count(*) from wiki_pages").fetchone() == (0,)
               and db.execute("select count(*) from search_misses").fetchone() == (0,)
+              and db.execute("select count(*) from wiki_runs").fetchone() == (0,)
               and dict(db.execute("select item_type, days from retention where item_type in ('wiki_version', 'search_miss')"))
               == {"wiki_version": 90, "search_miss": 90}
               and db.execute("insert into audit_log (at, actor, action, item_type) values (?, 'claude', 'read_repo', 'repo')",

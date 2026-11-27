@@ -37,6 +37,10 @@ frontend exists. install.py puts a `pwi` launcher in ~/.local/bin.
     pwi eod finish [--day D]  rewrite the day's notes with my answers from the Chat review
     pwi eod status         settings, last runs, and what's waiting in the review
     pwi eod off            stop the timers
+    pwi wiki compile       update the wiki pages that need it: stale ones, and active projects' pages not
+                           written yet (at most 5; --max N). --page ID for one page, --all for every project's
+                           page. It also runs by itself after each end-of-day run
+    pwi wiki status        the wiki's pages, which are due, and the last compile runs
 """
 
 import sys
@@ -61,6 +65,7 @@ import chat_app  # noqa: E402
 import cloud_sessions  # noqa: E402
 import collect  # noqa: E402
 import eod  # noqa: E402
+import wiki_compile  # noqa: E402
 import evaluation  # noqa: E402
 import gnome_extension  # noqa: E402
 import google_signin as google  # noqa: E402
@@ -307,6 +312,39 @@ def eod_command(db, args):
     return 0
 
 
+def wiki_command(db, args):
+    try:
+        if args.step == "compile":
+            def show(r):
+                print(f"{r['page']}: {r['status']}, {r['detail']}", flush=True)
+                if r["reply"] and wiki_compile.interactive():
+                    print("  " + r["reply"].replace("\n", "\n  "), flush=True)
+            if args.page and args.all:
+                print("error: give --page or --all, not both", file=sys.stderr)
+                return 1
+            due = wiki_compile.pages_to_compile(db, args.page, args.all, args.max)
+            if not due:
+                print("No wiki page needs compiling: none is stale, and every active project's page is written.")
+                return 0
+            print(f"{len(due)} page{'s' if len(due) != 1 else ''} to compile, a few minutes each: "
+                  + ", ".join(p["id"] for p, _ in due) + ".", flush=True)
+            results = wiki_compile.compile_pages(db, args.page, args.all, args.max, each=show)
+            return 1 if any(r["status"] == "failed" for r in results) else 0
+        s = wiki_compile.status(db)
+        written = [p for p in s["pages"] if p["compiled"]]
+        print(f"{len(s['pages'])} pages, {len(written)} written, {sum(p['stale'] for p in written)} stale."
+              + ("" if s["unit"] else " The compile run doesn't start by itself yet: pwi eod setup turns it on."))
+        for page_id, why in s["due"]:
+            print(f"  due: {page_id}: {why}")
+        for r in s["runs"]:
+            versions = f"v{r['version_before']} to v{r['version_after']}" if r["version_after"] is not None else ""
+            print(f"  {r['started_at']} {r['page_id']:<20} {r['status']:<7} {versions:<12} {r['detail'] or ''}")
+    except eod.EodError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(prog="pwi", description="Personal Work Intelligence layer")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -374,6 +412,13 @@ def main():
     agent.add_parser("finish", help="rewrite the day's notes with my answers").add_argument("--day", help="YYYY-MM-DD")
     agent.add_parser("status", help="settings, last runs and the review")
     agent.add_parser("off", help="stop the timers")
+    pages = commands.add_parser("wiki", help="the knowledge wiki").add_subparsers(dest="step", required=True)
+    compiling = pages.add_parser("compile", help="update the wiki pages that need it")
+    compiling.add_argument("--page", action="append", metavar="ID", help="this page (repeat for more)")
+    compiling.add_argument("--all", action="store_true", help="every project's page")
+    compiling.add_argument("--max", type=int, default=wiki_compile.MAX_PAGES,
+                           help=f"at most this many pages (default {wiki_compile.MAX_PAGES})")
+    pages.add_parser("status", help="pages, which are due, and the last compile runs")
     args = parser.parse_args()
     if args.command == "google":
         return google_command(args)
@@ -406,6 +451,8 @@ def main():
                 return app_usage_command(db, args)
             elif args.command == "eod":
                 return eod_command(db, args)
+            elif args.command == "wiki":
+                return wiki_command(db, args)
             elif args.command == "sources":
                 for s in sources.list_sources(db):
                     state = "on " if s["enabled"] else "off"

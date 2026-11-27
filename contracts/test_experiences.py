@@ -21,6 +21,10 @@ KNOWN_FIELDS = {
     "connectors", "allowed", "scope", "refs", "references", "owner", "me", "due_at", "message", "document", "from_me",
     "browsing", "computer_time", "computer_time_by_day", "focus_minutes", "pages_visited", "recent_pages",
     "possible_contradictions", "why", "supersedes", "superseded", "related", "kinds", "firefox", "app_usage",
+    # the wiki
+    "page", "version", "stale", "built_from", "sections", "base_version", "path", "cite_as", "dry_run", "new",
+    "claim_id", "summary", "key_terms", "overview", "status", "how-it-works", "lessons", "role", "key-facts",
+    "open-questions", "wiki",
 }
 # Section headings from the brief's appendix, in order.
 SECTIONS = {
@@ -33,6 +37,7 @@ SECTIONS = {
     "weekly_review": ["Milestones", "Progress by project", "Aging work", "Unresolved risks and blockers",
                       "Waiting for confirmation", "Confidence and coverage"],
     "ad_hoc_context": ["Context used", "The task itself", "Gaps"],
+    "wiki": ["Pages updated", "Left out", "Needs your attention", "Confidence and coverage"],  # not in the brief
 }
 
 
@@ -56,7 +61,8 @@ def main():
     for e, steps in {"daily_briefing": ["get_day", "list_unconfirmed"], "project_resumption": ["get_project"],
                      "end_of_day_review": ["list_unconfirmed", "read_claude_sessions", "save_session_note", "set_claim_status"],
                      "search": ["search", "get_evidence"], "weekly_review": ["get_week"],
-                     "ad_hoc_context": ["get_project", "search"]}.items():
+                     "ad_hoc_context": ["get_project", "search"],
+                     "wiki": ["get_wiki_page", "read_repo", "propose_wiki_update", "get_project"]}.items():
         check(f"{e} uses {', '.join(steps)}", set(steps) <= tokens[e])
 
     for e, headings in SECTIONS.items():

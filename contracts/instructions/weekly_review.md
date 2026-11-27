@@ -17,6 +17,7 @@ Use the week I named. Weeks run Monday to Sunday. If I named no week, use the la
    - Drive and Notion: documents written or substantially changed.
 3. Use `aging` from `get_week` for overdue commitments, open blockers and long-unconfirmed claims, and `possible_contradictions` for claims that may disagree. Each project's `focus_minutes` and `pages_visited`, and `computer_time_by_day`, show where the time went.
 4. Save any new commitment, blocker or decision you found online with `propose_claim`, with evidence, and any project alias you found with `add_project_alias`.
+5. Check the wiki: `get_wiki_page` without `page` lists the pages, with which are `stale`. Note the stale pages and why, the active projects whose page isn't written yet, and themes that recurred across two or more projects this week, which could become topic pages. Don't change pages now: offer to, and if I say yes, follow `get_instructions` with `wiki`.
 
 ## Output
 
@@ -27,6 +28,8 @@ Use the week I named. Weeks run Monday to Sunday. If I named no week, use the la
 **Aging work**: unfinished items, open PRs, and commitments past or near their deadline, each with its age.
 
 **Unresolved risks and blockers**: including possible contradictions between claims, for the end-of-day review to settle.
+
+**Wiki**: stale pages and why, active projects without a page, and themes that could become topic pages.
 
 **Waiting for confirmation**: the number of unconfirmed claims from that week.
 

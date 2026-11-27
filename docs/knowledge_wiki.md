@@ -2,7 +2,7 @@
 
 A knowledge base of my work that agents use first and I read too. Claude compiles one page per project, person and recurring topic from what the layer already holds and from the project's Git repositories. Every statement cites its evidence and shows its label. Pages can include diagrams, such as a user journey through a UI, a request across components or a repository's architecture: agents describe them as data, and the layer draws them as SVG. Agents read and write the wiki only through the layer's MCP tools. The layer renders it as a static HTML site with an interactive graph, for me and for agents that only have files.
 
-Step 1 of the [build order](#build-order) is built: the store, `read_repo`, `get_wiki_page`, `propose_wiki_update`, the wiki in `search`, `get_project` and `get_metrics`, and search misses (`service/wiki.py`, `service/repos.py`, `service/test_wiki.py`). The rest of this page is design.
+Steps 1 and 2 of the [build order](#build-order) are built. Step 1: the store, `read_repo`, `get_wiki_page`, `propose_wiki_update`, the wiki in `search`, `get_project` and `get_metrics`, and search misses (`service/wiki.py`, `service/repos.py`). Step 2: the `wiki` instructions, the compile run (`pwi wiki compile`, `service/wiki_compile.py`), the weekly review's wiki step, and the related changes to the end-of-day notes. The rest of this page is design.
 
 ## Why
 
@@ -351,19 +351,22 @@ All writing follows one instructions file, `contracts/instructions/wiki.md` (ser
 
 | When | Who | What |
 |---|---|---|
-| Once, at setup | `pwi wiki compile --all` | Compiles every project page from its repository and verified claims. |
-| After each end-of-day run | `pwi wiki compile --changed` | Updates the pages of projects with new commits or claims today, or that `wiki_lint` marks stale. At most 5 pages a run. |
-| Weekly review | Claude Desktop | A new step: `wiki_lint` over every page, fixes, and new topic pages for themes that recur. |
+| Once, at setup | `pwi wiki compile --all` | Compiles every project's page from its repository and claims. |
+| After each end-of-day run | `pwi wiki compile` | Updates the stale pages (the repository moved on, or the project's claims changed since), and writes the pages of projects active in the last 30 days that have none yet, most recently active first. At most 5 pages a run (`--max`). |
+| Weekly review | Claude Desktop | A new step and **Wiki** section: the stale pages and why, active projects without a page, and themes that recurred across projects, which could become topic pages. It offers to update them, and does if I say yes. `wiki_lint` joins it in step 4. |
 | Any time | Me, in Claude Desktop | "Update the wiki page for X". |
 | When I answer the Chat review | nobody | Labels are worked out at read time; only the static site rebuilds. |
 
-**The compile run** works like the end-of-day agent (`service/eod.py`):
-- **Mode:** `claude -p` in `dontAsk` mode, with the agent's instructions in `contracts/agent/wiki_compile.md`.
-- **Tools:** only the layer's tools, without the approval ones. No connectors, no `Read`, `Edit`, `Write`, `Bash` or web tools.
-- **Working directory:** an empty one under the runtime folder.
-- **Hook:** the same `PreToolUse` hook fails closed on any other MCP tool.
+**The compile run** (`service/wiki_compile.py`) works like the end-of-day agent (`service/eod.py`):
+- **Mode:** `claude -p` in `dontAsk` mode, once per page, with the run's instructions (`contracts/agent/wiki_compile.md`: this page only, no new claims) followed by the `wiki` instructions. Each page gets its own run, so one page's failure doesn't stop the others, and each run's context holds one page.
+- **Tools:** exactly seven of the layer's: `get_wiki_page`, `read_repo`, `get_project`, `list_projects`, `search`, `get_evidence` and `propose_wiki_update`. No connectors, no `Read`, `Edit`, `Write`, `Bash` or web tools.
+- **No hook:** in `dontAsk` mode everything off that list is denied without waiting, connectors that load late included, so nothing needs deciding at call time.
+- **Working directory:** an empty folder under the runtime folder.
+- **Records:** each run goes into `wiki_runs` (schema 9): the page, why it was picked, the versions before and after, turns and time. Claude's reply is printed only to a terminal: under systemd it would go to the journal, which keeps it past the layer's retention and deletes. Old runs go with the audit trail's retention.
+- **Started** by each end-of-day run when it ends, through `pwi-wiki.service`, which `pwi eod setup` writes and `pwi eod off` removes. There's no timer of its own.
+- **The end-of-day agent can't write the wiki:** its tool list leaves out `propose_wiki_update`. It can still read pages.
 
-It needs nothing else: online content comes in as claims, and repositories through `read_repo`. It runs as its own service after the end-of-day run, so a wiki failure never affects the notes or the Chat review.
+It needs nothing else: online content comes in as claims, and repositories through `read_repo`. It runs as its own service after the end-of-day run, so a wiki failure never affects the notes or the Chat review. In Claude Desktop, I can ask for a page any time: `get_instructions` with `wiki` gives the same instructions, with the shared rules.
 
 ## The static site
 
@@ -425,7 +428,7 @@ A new Wiki section:
 
 ## The store (schema 8)
 
-`schema/migrations/008_wiki.sql`, built in step 1. The diagram and image tables come with step 3.
+`schema/migrations/008_wiki.sql`, built in step 1; `009_wiki_runs.sql` adds the compile runs in step 2. The diagram and image tables come with step 3.
 
 | Table | Holds |
 |---|---|
@@ -463,7 +466,7 @@ It also needs:
 
 ## Related changes, in the same work
 
-From the same discussion. Small, and independent of the wiki:
+From the same discussion. Small, and independent of the wiki. Changes 1 to 4 are done (step 2), in `contracts/agent/end_of_day.md`, `contracts/instructions/common.md` and `docs/end_of_day_agent.md`:
 
 1. **Don't quote found instructions in the daily notes.** `contracts/agent/end_of_day.md:175` asks for "any text that tried to give you instructions" under *Needs your attention*. That text would then sit in a vault with no retention. Change it to: describe it and link to it, never quote it.
 2. **Agents read the layer, not the vault.** In the vault, a claim's label is only a tag at the end of a line. Add to `common.md`: the layer is the source; the vault is my view.
@@ -517,7 +520,7 @@ After two weeks of real use, a wiki check, like the 5-day evaluation:
    - `get_wiki_page`, `propose_wiki_update` and `read_repo`, with validation and tests;
    - the `wiki` kind in `search`, and `wiki` in `get_project`;
    - search misses.
-2. **Writing:**
+2. **Writing** (built):
    - the `wiki` instructions;
    - `contracts/agent/wiki_compile.md`;
    - `pwi wiki compile`, the run after the end-of-day agent, and the weekly review step;

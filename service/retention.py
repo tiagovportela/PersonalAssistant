@@ -81,6 +81,7 @@ def run(store_path, now=None):
                 counts["collector_runs"] = db.execute("DELETE FROM collector_runs WHERE started_at < ?", (before,)).rowcount
                 # The end-of-day agent's records: its runs, and reviews whose claims are long answered or gone.
                 counts["agent_runs"] = db.execute("DELETE FROM eod_runs WHERE started_at < ?", (before,)).rowcount
+                counts["wiki_runs"] = db.execute("DELETE FROM wiki_runs WHERE started_at < ?", (before,)).rowcount
                 counts["reviews"] = db.execute("DELETE FROM review_batches WHERE posted_at < ? AND status <> 'open'",
                                                (before,)).rowcount
             before = cutoff(db, "wiki_version", now)
