@@ -414,6 +414,53 @@ def main():
           wiki_metrics["pages"] == {"project": 2, "person": 1, "topic": 1} and wiki_metrics["written"] == 3
           and wiki_metrics["search_misses"]["count"] == 2 and wiki_metrics["statements_by_label"]["repo"] >= 3)
 
+    # Upkeep: wiki_lint, and the frontend's versions, notes and delete --------------------------
+    import wiki_admin
+    write(repos["atlas"], {"README.md": "# Atlas\n\nAtlas renders offline maps and routes.\n"}, "Routes", D2)
+    new_status(db, "clm_com", "disputed")
+    found = call("wiki_lint")
+    problems = {(f["page"], f["problem"], f.get("section")) for f in found["findings"]}
+    check("wiki_lint finds stale pages, files and diagrams that changed, lost evidence, disputed claims and orphans",
+          ("atlas", "stale", None) in problems and ("atlas", "file_changed", "overview") in problems
+          and ("atlas", "diagram_stale", "how-it-works") in problems and ("atlas", "lost_evidence", "overview") in problems
+          and ("ana-silva", "disputed", "role") in problems and ("ana-silva", "orphan", None) in problems
+          and all(f["fix"] for f in found["findings"]))
+    check("each finding says what's wrong: a diagram's id and the changed file",
+          any(f["problem"] == "diagram_stale" and "tile-request" in f["detail"] and "README.md" in f["detail"]
+              for f in found["findings"]))
+    db.execute("INSERT INTO labels VALUES ('claim', 'clm_com', 'confidential', 'me', ?)", (NOW,))
+    check("wiki_lint never reports on a statement citing something confidential",
+          ("ana-silva", "disputed", "role") not in {(f["page"], f["problem"], f.get("section"))
+                                                     for f in call("wiki_lint", {"page": "ana-silva"})["findings"]})
+    db.execute("DELETE FROM labels WHERE item_id = 'clm_com'")
+    v4 = call("propose_wiki_update", {"page": "atlas", "base_version": 3, "reason": "routes", "built_from": [
+        call("read_repo", {"project": "atlas"})["built_from"]], "sections": [{"id": "status", "blocks": [
+            {"text": "Atlas now renders routes too.", "cites": [{"repo": "atlas", "commit": call("read_repo", {"project": "atlas"})["head"]["commit"][:12], "path": "README.md"}]}]}]})
+    changes = wiki_admin.diff(db, "atlas", 3, 4)
+    status_change = next(x for x in changes["sections"] if x["id"] == "status")
+    check("the frontend shows what changed between two versions, line by line",
+          v4["version"] == 4 and status_change["change"] == "changed"
+          and {"op": "+", "text": "Atlas now renders routes too."} in status_change["lines"]
+          and any(l["op"] == "-" for l in status_change["lines"]))
+    back = wiki_admin.restore(db, "atlas", 3)
+    restored = call("get_wiki_page", {"page": "atlas", "sections": ["status"]})
+    check("restoring an old version saves it as the newest, by me",
+          back == {"page": "atlas", "version": 5, "restored": 3} and restored["written_by"] == "me"
+          and restored["content"][0]["blocks"][0]["text"].startswith("Offline maps ship"))
+    wiki_admin.set_notes(db, "beta", "Beta is frozen until January.")
+    check("my notes on a page reach Claude as mine, verified, even on a page not written yet",
+          call("get_wiki_page", {"page": "beta"})["my_notes"]["text"] == "Beta is frozen until January."
+          and call("get_wiki_page", {"page": "beta"})["my_notes"]["label"] == "verified")
+    wiki_admin.delete_page(db, "offline-maps")
+    check("deleting a page in the frontend removes it and its versions, and the audit trail says I did",
+          call("get_wiki_page", {"page": "offline-maps"})["found"] is False
+          and db.execute("SELECT COUNT(*) FROM wiki_versions WHERE page_id = 'offline-maps'").fetchone()[0] == 0
+          and db.execute("SELECT actor FROM audit_log WHERE action = 'delete' AND item_type = 'wiki_page'").fetchone()[0] == "me")
+    metrics = call("get_metrics")["wiki"]
+    check("get_metrics counts diagrams by type, lint findings, the site's build and my weekly confirmation rate",
+          metrics["diagrams"] == {"sequence": 1} and metrics["lint"].get("stale", 0) >= 1
+          and len(metrics["confirmation_by_week"]) == 4 and "site" in metrics)
+
     # Leaks, retention ---------------------------------------------------------------------------
     _, leaks = evaluation.leak_check(paths.STORE_PATH, db, [D1, D2], {"atlas", "beta"}, ["Buy the competitor", "maps"])
     check("the evaluation's leak check covers the wiki, and finds nothing confidential", leaks == [])
@@ -421,8 +468,8 @@ def main():
     counts = retention.run(paths.STORE_PATH, now=future)
     versions = [r[0] for r in db.execute("SELECT version FROM wiki_versions WHERE page_id = 'atlas'")]
     check("retention deletes past wiki versions and old search misses, never a page's current version",
-          versions == [3] and counts["wiki_versions"] == 2 and counts["search_misses"] == 2
-          and db.execute("SELECT COUNT(*) FROM wiki_pages").fetchone()[0] == 3)
+          versions == [5] and counts["wiki_versions"] == 4 and counts["search_misses"] == 2
+          and db.execute("SELECT COUNT(*) FROM wiki_pages").fetchone()[0] == 3)  # atlas, ana-silva, and beta for my notes
     check("foreign keys still hold, and the wiki's search indexes are consistent",
           db.execute("PRAGMA foreign_key_check").fetchall() == []
           and db.execute("INSERT INTO wiki_fts (wiki_fts) VALUES ('integrity-check')").rowcount is not None)

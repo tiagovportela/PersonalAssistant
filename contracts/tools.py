@@ -325,6 +325,12 @@ TOOLS = [
                                                              "to check how it looks. Off by default: descriptions are cheaper."},
               "kind": {"type": "string", "enum": WIKI_KINDS, "description": "Catalog only: just this kind of page."},
               "project": {**PROJECT, "description": "Catalog only: the project's page and the pages that link to it."}})),
+    read("wiki_lint",
+         "What needs fixing in the knowledge wiki, page by page: stale pages, statements whose evidence is gone, "
+         "statements citing disputed claims, cited files and diagrams whose files changed, broken links, pages nothing "
+         "links to, topic pages with fewer than two projects, pages near their size limit, and active projects whose "
+         "page isn't written. Each finding says how to fix it, with propose_wiki_update.",
+         obj({"page": {**PAGE_ID, "description": "Just this page. Default: every page."}})),
     read("read_repo",
          "Reads a project's Git repository: committed files only, never the working tree, with secrets redacted. Without "
          "path or since: an overview with the default branch's head commit, the README, CLAUDE.md or AGENTS.md, manifest "

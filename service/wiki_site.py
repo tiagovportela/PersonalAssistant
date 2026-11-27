@@ -25,6 +25,7 @@ import json
 import os
 import re
 import shutil
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -377,6 +378,7 @@ def copy_images(db, pages, folder):
 def build(db, target=None):
     """Builds the site into a new folder and swaps it in. Returns what was built."""
     target = Path(target or SITE_DIR)
+    started = time.monotonic()
     catalog, pages = collect_pages(db)
     known = set(pages)
     github = github_links(db)
@@ -401,6 +403,7 @@ def build(db, target=None):
     os.chmod(target, 0o700)
     shutil.rmtree(old, ignore_errors=True)
     store.set_setting(db, "wiki.site_built_at", store.now())
+    store.set_setting(db, "wiki.site_build_seconds", round(time.monotonic() - started, 1))
     return {"path": str(target), "pages": len(pages), "written": sum(e["compiled"] for e in catalog)}
 
 

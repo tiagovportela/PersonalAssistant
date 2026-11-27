@@ -2,7 +2,7 @@
 
 A knowledge base of my work that agents use first and I read too. Claude compiles one page per project, person and recurring topic from what the layer already holds and from the project's Git repositories. Every statement cites its evidence and shows its label. Pages can include diagrams, such as a user journey through a UI, a request across components or a repository's architecture: agents describe them as data, and the layer draws them as SVG. Agents read and write the wiki only through the layer's MCP tools. The layer renders it as a static HTML site with an interactive graph, for me and for agents that only have files.
 
-Steps 1 to 3 of the [build order](#build-order) are built. Step 1: the store, `read_repo`, `get_wiki_page`, `propose_wiki_update`, the wiki in `search`, `get_project` and `get_metrics`, and search misses (`service/wiki.py`, `service/repos.py`). Step 2: the `wiki` instructions, the compile run (`pwi wiki compile`, `service/wiki_compile.py`), the weekly review's wiki step, and the related changes to the end-of-day notes. Step 3a: the static site (`pwi wiki build` and `open`, `service/wiki_site.py`), rebuilt by the service within a minute of a change. Step 3b: diagrams (`service/diagrams.py`) and documentation images, in pages, previews and the site. The rest of this page is design.
+Steps 1 to 4 of the [build order](#build-order) are built. Step 1: the store, `read_repo`, `get_wiki_page`, `propose_wiki_update`, the wiki in `search`, `get_project` and `get_metrics`, and search misses (`service/wiki.py`, `service/repos.py`). Step 2: the `wiki` instructions, the compile run (`pwi wiki compile`, `service/wiki_compile.py`), the weekly review's wiki step, and the related changes to the end-of-day notes. Step 3a: the static site (`pwi wiki build` and `open`, `service/wiki_site.py`), rebuilt by the service within a minute of a change. Step 3b: diagrams (`service/diagrams.py`) and documentation images, in pages, previews and the site. Step 4: `wiki_lint`, the frontend's Wiki section (versions and their changes, restore, delete, my notes, lint findings, search misses, rebuild) and the wiki's metrics. What's left is the two-week check below, which is done by hand, and step 5 if the misses call for it.
 
 ## Why
 
@@ -496,8 +496,8 @@ From the same discussion. Small, and independent of the wiki. Changes 1 to 4 are
 - pages by kind, and stale pages;
 - statements by label, and the share that are `verified` or `repo`;
 - diagrams by type, stale diagrams, and diagrams with layout warnings;
-- refused proposals, and why;
-- search misses, and the share of searches answered by a wiki section;
+- refused proposals, and why (not built: a refusal isn't recorded anywhere yet);
+- search misses (built), and the share of searches answered by a wiki section (not built: searches that find something aren't recorded);
 - the last build's time and duration;
 - my weekly confirmation rate.
 
@@ -528,7 +528,7 @@ After two weeks of real use, a wiki check, like the 5-day evaluation:
 3. **The static site**, in two parts:
    - 3a (built): `pwi wiki build` and `open`; the renderer and its injection tests; the graph, drawn by our own code instead of a library; search, timelines, and the automatic rebuild.
    - 3b (built): diagrams (their checks in `propose_wiki_update`, `service/diagrams.py` with its layouts and injection tests, PNG previews and `dry_run`, and the generated `repo-map` and `activity` diagrams), and documentation images (in `read_repo`, as `image` blocks, and copied into the site).
-4. **Upkeep:**
+4. **Upkeep** (built; the two-week check is done by hand):
    - `wiki_lint`;
    - the frontend's Wiki section, and the two new retention kinds on its Retention page;
    - the metrics;

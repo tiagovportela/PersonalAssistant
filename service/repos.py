@@ -147,6 +147,17 @@ class Heads:
         return self.seen[path]
 
 
+def file_changed(path, commit, head, file):
+    """Whether a file differs between a commit and the head: True, False, or None if the commit is gone."""
+    if resolve(path, commit) is None:
+        return None
+    try:
+        git(path, "diff", "--quiet", commit, head, "--", file)
+        return False
+    except subprocess.CalledProcessError as e:
+        return True if e.returncode == 1 else None
+
+
 def drift(path, built, head):
     """How far the head moved on from a commit a wiki page was built from, or None if it didn't."""
     if built == head:

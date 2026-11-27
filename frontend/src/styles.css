@@ -242,3 +242,14 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
+
+/* Wiki */
+.wiki-lint { padding-left: 1.1rem; display: grid; gap: 0.35rem; }
+.wiki-notes { display: grid; gap: 0.5rem; max-width: 46rem; margin: 1rem 0 1.5rem; }
+.wiki-notes textarea { width: 100%; }
+.wiki-diff, .wiki-text { border-top: 1px solid var(--rule); padding-top: 0.75rem; margin-top: 0.75rem; }
+.wiki-diff ul, .wiki-text ul { list-style: none; padding: 0; margin: 0 0 1rem; display: grid; gap: 0.25rem; }
+.wiki-diff .added { background: color-mix(in srgb, var(--green) 12%, transparent); }
+.wiki-diff .removed { background: color-mix(in srgb, var(--red) 10%, transparent); text-decoration: line-through; }
+.danger-zone { margin-top: 2rem; border-top: 1px solid var(--rule); padding-top: 1rem; }
+.button.danger { border-color: var(--red); color: var(--red); }

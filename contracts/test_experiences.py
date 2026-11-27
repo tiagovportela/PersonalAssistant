@@ -60,9 +60,10 @@ def main():
         print(unknown)
     for e, steps in {"daily_briefing": ["get_day", "list_unconfirmed"], "project_resumption": ["get_project"],
                      "end_of_day_review": ["list_unconfirmed", "read_claude_sessions", "save_session_note", "set_claim_status"],
-                     "search": ["search", "get_evidence"], "weekly_review": ["get_week"],
+                     "search": ["search", "get_evidence"],
                      "ad_hoc_context": ["get_project", "search"],
-                     "wiki": ["get_wiki_page", "read_repo", "propose_wiki_update", "get_project"]}.items():
+                     "wiki": ["get_wiki_page", "wiki_lint", "read_repo", "propose_wiki_update", "get_project"],
+                     "weekly_review": ["get_week", "wiki_lint"]}.items():
         check(f"{e} uses {', '.join(steps)}", set(steps) <= tokens[e])
 
     for e, headings in SECTIONS.items():

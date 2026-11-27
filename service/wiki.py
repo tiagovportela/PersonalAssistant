@@ -471,6 +471,106 @@ def claims_summary(items, noun):
 
 # Read tools -------------------------------------------------------------------------
 
+LINT_ACTIVE_DAYS = 30
+FIXES = {
+    "not_written": "Write it: read_repo, then propose_wiki_update with base_version 0.",
+    "stale": "Read what changed (read_repo with since set to built_from, get_project) and update the sections it affects.",
+    "lost_evidence": "Their evidence expired, or was retracted or deleted: rewrite them on evidence that stands, or drop them.",
+    "disputed": "They cite disputed claims: check the claims, and say so on the page or leave the statements out.",
+    "file_changed": "The cited files changed since the cited commit: read them again and update the statements.",
+    "diagram_stale": "Files the diagram cites changed: read them again and update the diagram.",
+    "broken_link": "It links to pages that don't exist any more: link another page or drop the link.",
+    "orphan": "No page links here: link it from the projects or topics it belongs to, or ask me whether to delete it.",
+    "topic_one_project": "A topic page links at least two projects: link another, or fold it into the project's page.",
+    "near_budget": "Say it shorter, or move detail to a topic page.",
+}
+
+
+def lint(db, args):
+    """wiki_lint: what needs fixing, page by page. Only what Claude may see: a statement with anything
+    confidential in it is passed over in silence, as get_wiki_page passes it over."""
+    reader = Reader(db)
+    if args.get("page"):
+        page = reader.page(args["page"])
+        if page is None:
+            return {"found": False, "gaps": [f"There's no wiki page {args['page']}."]}
+        pages = [page]
+    else:
+        pages = visible_pages(db)
+    since = (date.today() - timedelta(days=LINT_ACTIVE_DAYS)).isoformat()
+    findings, changed = [], {}
+
+    def add(page, problem, detail, section=None):
+        findings.append({"page": page["id"], **({"section": section} if section else {}), "problem": problem,
+                         "detail": detail, "fix": FIXES[problem]})
+
+    def file_moved(c):
+        key = (c["source_id"], c["commit_sha"], c["path"])
+        if key not in changed:
+            repo = reader.repos.get(c["source_id"])
+            head = reader.heads.get(repo["locator"]) if repo else None
+            changed[key] = bool(head and head["commit"] != c["commit_sha"]
+                                and repos.file_changed(repo["locator"], c["commit_sha"], head["commit"], c["path"]))
+        return changed[key]
+
+    for page in pages:
+        version = current(db, page["id"]) if page["stored"] else None
+        if version is None:
+            active = db.execute(f"SELECT MAX(local_day) FROM events_for_claude WHERE project_id = ? AND {reads.WORK}",
+                                (page["project_id"],)).fetchone()[0] if page["project_id"] else None
+            if page["kind"] == "project" and active and active >= since:
+                add(page, "not_written", f"The project was last active on {active}, and its page isn't written.")
+            continue
+        stale = reader.staleness(page, version)
+        if stale["is_stale"]:
+            add(page, "stale", " ".join(stale["why"]))
+        chars, project_links = 0, set()
+        for s in db.execute("SELECT * FROM wiki_sections WHERE page_id = ? AND version = ? ORDER BY position",
+                            (page["id"], version["version"])).fetchall():
+            lost, disputed, moved, broken = 0, set(), set(), set()
+            for st in db.execute("SELECT * FROM wiki_statements WHERE section_seq = ?", (s["seq"],)).fetchall():
+                cites = db.execute("SELECT * FROM wiki_citations WHERE statement_seq = ?", (st["seq"],)).fetchall()
+                states = [reader.cite(c) for c in cites]
+                if any(state == HIDDEN for state, _, _ in states):
+                    continue
+                if not any(state == LIVE and label for state, label, _ in states):
+                    lost += 1
+                    continue
+                if not st["kind"]:
+                    chars += len(st["text"])
+                disputed |= {shown["claim_id"] for state, label, shown in states if label == "disputed"}
+                for c, (state, _, _) in zip(cites, states):
+                    if state == LIVE and c["commit_sha"] and c["path"] and file_moved(c):
+                        moved.add((st["kind"] == "diagram",
+                                   json.loads(st["block"])["id"] if st["kind"] == "diagram" else None, c["path"]))
+                for (target,) in db.execute("SELECT target FROM wiki_links WHERE statement_seq = ?", (st["seq"],)):
+                    linked = reader.page(target)
+                    if linked is None and target != page["id"]:
+                        broken.add(target)
+                    elif linked and linked["kind"] == "project":
+                        project_links.add(target)
+            if lost:
+                add(page, "lost_evidence", f"{lost} statement{'s' if lost != 1 else ''} lost all their evidence.", s["section_id"])
+            if disputed:
+                add(page, "disputed", "Cites disputed claims: " + ", ".join(sorted(disputed)) + ".", s["section_id"])
+            for is_diagram, diagram, path in sorted(moved, key=str):
+                add(page, "diagram_stale" if is_diagram else "file_changed",
+                    (f"Diagram {diagram}: " if is_diagram else "") + f"{path} changed since the cited commit.", s["section_id"])
+            if broken:
+                add(page, "broken_link", "Links to " + ", ".join(sorted(broken)) + ".", s["section_id"])
+        if page["kind"] in ("person", "topic") and not reader.incoming(page["id"]):
+            add(page, "orphan", "No page links to it.")
+        if page["kind"] == "topic" and len(project_links) < 2:
+            add(page, "topic_one_project", f"It links {len(project_links)} project page{'s' if len(project_links) != 1 else ''}.")
+        if chars > PAGE_CHARS * 0.9:
+            add(page, "near_budget", f"{chars} of its {PAGE_CHARS} characters.")
+    result = {"findings": findings, "count": len(findings), "pages_checked": len(pages),
+              "by_problem": dict(Counter(f["problem"] for f in findings)), "found": True}
+    if not findings:
+        result["gaps"] = ["Nothing to fix: every page checked is current and its evidence stands."]
+    return result
+
+
 def get_wiki_page(db, args):
     reader = Reader(db)
     if "page" not in args:
@@ -556,7 +656,27 @@ def metrics(db, since):
             labels.update(b["label"] for b in s["blocks"])
     statements = sum(labels.values())
     misses = db.execute("SELECT at, query FROM search_misses WHERE at >= ? ORDER BY at DESC", (since,)).fetchall()
+    kinds = Counter()
+    for p in pages:
+        v = current(db, p["id"]) if p["stored"] else None
+        for s in reader.compiled(p["id"], v["version"]) if v else []:
+            kinds.update(b["diagram"]["type"] for b in s["blocks"] if b.get("kind") == "diagram")
+    found = lint(db, {})["by_problem"]
+    weeks = []
+    for back in range(4):  # the confirmation rate: what lasts as verified is what I confirm
+        start = date.today() - timedelta(days=date.today().weekday() + 7 * back)
+        end = start + timedelta(days=7)
+        proposed = db.execute("SELECT COUNT(*) FROM claims WHERE type <> 'session_note' AND created_at >= ? AND created_at < ?",
+                              (start.isoformat(), end.isoformat())).fetchone()[0]
+        confirmed = db.execute("SELECT COUNT(DISTINCT v.claim_id) FROM claim_versions v JOIN claims c ON c.id = v.claim_id"
+                               " WHERE c.type <> 'session_note' AND v.status = 'supported' AND v.changed_by = 'me'"
+                               " AND v.created_at >= ? AND v.created_at < ?", (start.isoformat(), end.isoformat())).fetchone()[0]
+        weeks.append({"week_of": start.isoformat(), "proposed": proposed, "confirmed": confirmed,
+                      "rate": round(confirmed / proposed, 2) if proposed else None})
     return {"pages": dict(Counter(p["kind"] for p in pages)), "written": compiled, "stale": stale,
+            "diagrams": dict(kinds), "stale_diagrams": found.get("diagram_stale", 0), "lint": found,
+            "site": {"built_at": store.setting(db, "wiki.site_built_at"), "seconds": store.setting(db, "wiki.site_build_seconds")},
+            "confirmation_by_week": weeks,
             "statements_by_label": dict(labels),
             "verified_or_repo_share": round((labels["verified"] + labels["repo"]) / statements, 2) if statements else None,
             "search_misses": {"count": len(misses), "recent": [dict(m) for m in misses[:10]]}}
@@ -626,6 +746,43 @@ def check_cites(db, reader, page, block, where, problems):
             problems.append(f"{where}.text links to [[{target}]], but there's no such page. Use an id from the catalog.")
         links.append(target)
     return rows, sorted(set(links))
+
+
+def save_version(db, page, sections, summary, key_terms, built_from, written_by, reason):
+    """Saves the next version of a page, whole, and moves the search index to it. Inside a transaction."""
+    now = store.now()
+    before = current(db, page["id"])
+    if not db.execute("SELECT 1 FROM wiki_pages WHERE id = ?", (page["id"],)).fetchone():
+        db.execute("INSERT INTO wiki_pages (id, kind, title, project_id, email, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                   (page["id"], page["kind"], page["title"], page["project_id"], page["email"], now))
+    version = (before["version"] if before else 0) + 1
+    seq = db.execute("INSERT INTO wiki_versions (page_id, version, summary, key_terms, built_from, written_by, reason,"
+                     " written_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                     (page["id"], version, summary, json.dumps(key_terms, ensure_ascii=False), json.dumps(built_from),
+                      written_by, reason, now)).lastrowid
+    if before:
+        db.execute("DELETE FROM wiki_fts WHERE rowid IN (SELECT st.seq FROM wiki_statements st JOIN wiki_sections s"
+                   " ON s.seq = st.section_seq WHERE s.page_id = ? AND s.version = ?)", (page["id"], before["version"]))
+        db.execute("DELETE FROM wiki_pages_fts WHERE rowid = ?", (before["seq"],))
+    for n, s in enumerate(sections):
+        section_seq = db.execute("INSERT INTO wiki_sections (page_id, version, section_id, position, heading, summary)"
+                                 " VALUES (?, ?, ?, ?, ?, ?)", (page["id"], version, s["id"], n, s["heading"], s["summary"])).lastrowid
+        for m, st in enumerate(s["statements"]):
+            statement_seq = db.execute("INSERT INTO wiki_statements (section_seq, position, style, text, kind, block)"
+                                       " VALUES (?, ?, ?, ?, ?, ?)",
+                                       (section_seq, m, st["style"], st["text"], st["kind"],
+                                        json.dumps(st["block"], ensure_ascii=False) if st["block"] else None)).lastrowid
+            for k, c in enumerate(st["cites"]):
+                db.execute("INSERT INTO wiki_citations (statement_seq, position, claim_id, event_id, source_id, commit_sha,"
+                           " path, page_id, section_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                           (statement_seq, k, c["claim_id"], c["event_id"], c["source_id"], c["commit_sha"], c["path"],
+                            c["page_id"], c["section_id"]))
+            for target in st["links"]:
+                db.execute("INSERT OR IGNORE INTO wiki_links VALUES (?, ?)", (statement_seq, target))
+            db.execute("INSERT INTO wiki_fts (rowid, heading, text) VALUES (?, ?, ?)", (statement_seq, s["heading"], plain(st["text"])))
+    db.execute("INSERT INTO wiki_pages_fts (rowid, title, key_terms, summary) VALUES (?, ?, ?, ?)",
+               (seq, page["title"], " ".join(key_terms), summary or ""))
+    return version
 
 
 def check_diagram(db, reader, page, block, where, problems):
@@ -815,49 +972,18 @@ def propose_wiki_update(db, args):
                 "note": "Nothing was saved. Call again without dry_run to save it."}
 
     def work():
-        now = store.now()
         again = current(db, page["id"])
         if (again["version"] if again else 0) != at_version:
             raise Refused(f"Page {page['id']} changed while you were writing. Read it again with get_wiki_page.")
-        if not db.execute("SELECT 1 FROM wiki_pages WHERE id = ?", (page["id"],)).fetchone():
-            db.execute("INSERT INTO wiki_pages (id, kind, title, project_id, email, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                       (page["id"], kind, page["title"], page["project_id"], page["email"], now))
-        version = at_version + 1
         key_terms = args["key_terms"] if "key_terms" in args else json.loads(before["key_terms"]) if before else []
         summary_text = args["summary"].strip() if "summary" in args else before["summary"] if before else None
         built_from = {**(json.loads(before["built_from"]) if before else {}), **built}
-        seq = db.execute("INSERT INTO wiki_versions (page_id, version, summary, key_terms, built_from, written_by, reason,"
-                         " written_at) VALUES (?, ?, ?, ?, ?, 'claude', ?, ?)",
-                         (page["id"], version, summary_text, json.dumps(key_terms, ensure_ascii=False),
-                          json.dumps(built_from), args["reason"].strip(), now)).lastrowid
-        if before:
-            db.execute("DELETE FROM wiki_fts WHERE rowid IN (SELECT st.seq FROM wiki_statements st JOIN wiki_sections s"
-                       " ON s.seq = st.section_seq WHERE s.page_id = ? AND s.version = ?)", (page["id"], at_version))
-            db.execute("DELETE FROM wiki_pages_fts WHERE rowid = ?", (before["seq"],))
-        for n, s in enumerate(merged):
-            section_seq = db.execute("INSERT INTO wiki_sections (page_id, version, section_id, position, heading, summary)"
-                                     " VALUES (?, ?, ?, ?, ?, ?)",
-                                     (page["id"], version, s["id"], n, s["heading"], s["summary"])).lastrowid
-            for m, st in enumerate(s["statements"]):
-                statement_seq = db.execute("INSERT INTO wiki_statements (section_seq, position, style, text, kind, block)"
-                                           " VALUES (?, ?, ?, ?, ?, ?)",
-                                           (section_seq, m, st["style"], st["text"], st["kind"],
-                                            json.dumps(st["block"], ensure_ascii=False) if st["block"] else None)).lastrowid
-                for k, c in enumerate(st["cites"]):
-                    db.execute("INSERT INTO wiki_citations (statement_seq, position, claim_id, event_id, source_id, commit_sha,"
-                               " path, page_id, section_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                               (statement_seq, k, c["claim_id"], c["event_id"], c["source_id"], c["commit_sha"], c["path"],
-                                c["page_id"], c["section_id"]))
-                for target in st["links"]:
-                    db.execute("INSERT OR IGNORE INTO wiki_links VALUES (?, ?)", (statement_seq, target))
-                db.execute("INSERT INTO wiki_fts (rowid, heading, text) VALUES (?, ?, ?)", (statement_seq, s["heading"], plain(st["text"])))
-        db.execute("INSERT INTO wiki_pages_fts (rowid, title, key_terms, summary) VALUES (?, ?, ?, ?)",
-                   (seq, page["title"], " ".join(key_terms), summary_text or ""))
+        save_version(db, page, merged, summary_text, key_terms, built_from, "claude", args["reason"].strip())
         audit(db, "propose", "wiki_page", page["id"])
         return summary
 
     return transaction(db, work)
 
 
-WIKI_READS = {"get_wiki_page": get_wiki_page}
+WIKI_READS = {"get_wiki_page": get_wiki_page, "wiki_lint": lint}
 WIKI_WRITES = {"propose_wiki_update": propose_wiki_update}

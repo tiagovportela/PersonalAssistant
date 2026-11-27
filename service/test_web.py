@@ -244,6 +244,21 @@ def main():
               request("PUT", "/api/retention/transcript", {"days": None})[0] == 200
               and request("PUT", "/api/retention/transcript", {"days": -4})[0] == 400
               and request("PUT", "/api/retention/transcript", {"days": "soon"})[0] == 400)
+        # the wiki
+        status, wiki, _ = request("GET", "/api/wiki")
+        page = wiki["pages"][0]["page"] if status == 200 and wiki["pages"] else None
+        check("the wiki lists every project's page, with lint findings, search misses and the site",
+              status == 200 and page and {"lint", "misses", "site"} <= set(wiki))
+        check("my notes on a page are saved here, and a page's versions and notes read back",
+              request("PUT", f"/api/wiki/{page}/notes", {"text": "Ask Ana before changing the cache."})[0] == 200
+              and request("GET", f"/api/wiki/{page}")[1]["notes"]["text"] == "Ask Ana before changing the cache.")
+        check("an unknown page can't be read, restored or deleted",
+              request("GET", "/api/wiki/no-such-page")[0] == 400 and request("DELETE", "/api/wiki/no-such-page")[0] == 400
+              and request("POST", f"/api/wiki/{page}/restore", {"version": 7})[0] == 400)
+        check("the site can be rebuilt from here, and the wiki's retention set",
+              request("POST", "/api/wiki/build")[0] == 200
+              and request("PUT", "/api/retention/wiki_version", {"days": 30})[0] == 200
+              and request("PUT", "/api/retention/search_miss", {"days": 60})[0] == 200)
         check("cleanup and collection can be run from here",
               request("POST", "/api/cleanup")[0] == 200 and request("POST", "/api/collect")[0] == 200)
         actions = {(a["actor"], a["action"]) for a in request("GET", "/api/audit")[1]}

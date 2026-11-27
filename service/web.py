@@ -26,6 +26,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 import admin
 import paths
 import sources
+import wiki_admin
 import store
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "frontend" / "dist"
@@ -80,6 +81,14 @@ def routes():
         ("DELETE", r"/api/aliases/([a-z_]+)/(.+)", lambda app, db, m, q, b: admin.remove_alias(db, m[1], unquote(m[2]))),
         ("GET", r"/api/connectors", lambda app, db, m, q, b: admin.connectors(db)),
         ("PUT", r"/api/connectors/([a-z_]+)", lambda app, db, m, q, b: admin.set_connector(db, m[1], b)),
+        ("GET", r"/api/wiki", lambda app, db, m, q, b: wiki_admin.overview(db)),
+        ("POST", r"/api/wiki/build", lambda app, db, m, q, b: wiki_admin.build(db)),
+        ("GET", r"/api/wiki/([a-z0-9-]+)", lambda app, db, m, q, b: wiki_admin.page(db, m[1])),
+        ("GET", r"/api/wiki/([a-z0-9-]+)/diff", lambda app, db, m, q, b: wiki_admin.diff(
+            db, m[1], int(one(q, "from") or 0), int(one(q, "to") or 0))),
+        ("POST", r"/api/wiki/([a-z0-9-]+)/restore", lambda app, db, m, q, b: wiki_admin.restore(db, m[1], int(b.get("version") or 0))),
+        ("PUT", r"/api/wiki/([a-z0-9-]+)/notes", lambda app, db, m, q, b: wiki_admin.set_notes(db, m[1], b.get("text"))),
+        ("DELETE", r"/api/wiki/([a-z0-9-]+)", lambda app, db, m, q, b: wiki_admin.delete_page(db, m[1])),
         ("GET", r"/api/retention", lambda app, db, m, q, b: admin.retention_settings(db)),
         ("PUT", r"/api/retention/([a-z_]+)", lambda app, db, m, q, b: admin.set_retention(db, m[1], b.get("days"))),
     ]
