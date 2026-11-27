@@ -286,7 +286,8 @@ class Reader:
             items = [{"person": who, **({"page": pages[who]} if who in pages else {}),
                       **({"claims": people[who]} if people[who] else {}), **({"commits": authors[who]} if who in authors else {})}
                      for who in sorted(set(people) | set(authors), key=lambda w: -(people[w] + authors.get(w, 0)))]
-            sections["people"] = (f"{len(items)} people in its claims and commits." if items else "Nobody yet.", items[:30])
+            sections["people"] = (f"{len(items)} {'person' if len(items) == 1 else 'people'} in its claims and commits."
+                                  if items else "Nobody yet.", items[:30])
             aliases = [dict(a) for a in db.execute("SELECT kind, value FROM project_aliases WHERE project_id = ?"
                                                    " ORDER BY kind, value", (pid,))]
             sections["where-it-lives"] = (", ".join(sorted({a["kind"] for a in aliases})) or "Nowhere recorded.", aliases)

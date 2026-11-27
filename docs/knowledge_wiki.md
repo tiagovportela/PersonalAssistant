@@ -2,7 +2,7 @@
 
 A knowledge base of my work that agents use first and I read too. Claude compiles one page per project, person and recurring topic from what the layer already holds and from the project's Git repositories. Every statement cites its evidence and shows its label. Pages can include diagrams, such as a user journey through a UI, a request across components or a repository's architecture: agents describe them as data, and the layer draws them as SVG. Agents read and write the wiki only through the layer's MCP tools. The layer renders it as a static HTML site with an interactive graph, for me and for agents that only have files.
 
-Steps 1 and 2 of the [build order](#build-order) are built. Step 1: the store, `read_repo`, `get_wiki_page`, `propose_wiki_update`, the wiki in `search`, `get_project` and `get_metrics`, and search misses (`service/wiki.py`, `service/repos.py`). Step 2: the `wiki` instructions, the compile run (`pwi wiki compile`, `service/wiki_compile.py`), the weekly review's wiki step, and the related changes to the end-of-day notes. The rest of this page is design.
+Steps 1, 2 and 3a of the [build order](#build-order) are built. Step 1: the store, `read_repo`, `get_wiki_page`, `propose_wiki_update`, the wiki in `search`, `get_project` and `get_metrics`, and search misses (`service/wiki.py`, `service/repos.py`). Step 2: the `wiki` instructions, the compile run (`pwi wiki compile`, `service/wiki_compile.py`), the weekly review's wiki step, and the related changes to the end-of-day notes. Step 3a: the static site (`pwi wiki build` and `open`, `service/wiki_site.py`), rebuilt by the service within a minute of a change. The rest of this page is design.
 
 ## Why
 
@@ -413,7 +413,7 @@ catalog.json            the catalog, for agents that only read files
 - **Only code writes HTML.** All text goes through escaping and a small Markdown renderer for the allowed subset. Links must be `https` or a page link, never `javascript:`. Tests feed it `<script>`, `"><img onerror=…>` and `javascript:` statements.
 - **Each page has a strict CSP** in a `<meta>` tag: no inline scripts and nothing loaded from the network. External links get `rel="noopener noreferrer"`.
 - **It works from a file.** Browsers block `fetch` and module scripts on `file://`, so the data goes in classic `<script src>` files that set a global.
-- **The graph library is third-party code**, so it follows brief §10: reviewed in `docs/third_party_reviews.md`, pinned to an exact version and checksum-verified in `third_party/`, never loaded from a CDN. The candidate is Cytoscape.js (MIT, one file, no dependencies), or a small force layout of our own if the review finds it too big. Either way it's JavaScript in the static site, so the Python service stays standard-library only.
+- **The graph is drawn by our own code** (`service/wiki_site_assets/site.js`): a Fruchterman–Reingold layout of about 80 lines, run once when a page opens. A library such as Cytoscape.js would have been third-party code under brief §10, to review, pin and checksum; at a few hundred pages, our own layout is enough. Data from the store only enters the page through `textContent` and `setAttribute`, never `innerHTML`.
 
 ## The frontend
 
@@ -525,13 +525,9 @@ After two weeks of real use, a wiki check, like the 5-day evaluation:
    - `contracts/agent/wiki_compile.md`;
    - `pwi wiki compile`, the run after the end-of-day agent, and the weekly review step;
    - related changes 1 to 4.
-3. **The static site:**
-   - `pwi wiki build` and `open`;
-   - the renderer and its injection tests;
-   - diagrams: their checks in `propose_wiki_update`, `service/diagrams.py` with its layouts and injection tests, PNG previews and `dry_run`, and the generated `repo-map` and `activity` diagrams;
-   - documentation images: in `read_repo`, as `image` blocks, and copied into the site;
-   - the graph library's review;
-   - search, timeline, and the automatic rebuild.
+3. **The static site**, in two parts:
+   - 3a (built): `pwi wiki build` and `open`; the renderer and its injection tests; the graph, drawn by our own code instead of a library; search, timelines, and the automatic rebuild.
+   - 3b: diagrams (their checks in `propose_wiki_update`, `service/diagrams.py` with its layouts and injection tests, PNG previews and `dry_run`, and the generated `repo-map` and `activity` diagrams), and documentation images (in `read_repo`, as `image` blocks, and copied into the site).
 4. **Upkeep:**
    - `wiki_lint`;
    - the frontend's Wiki section, and the two new retention kinds on its Retention page;
@@ -541,7 +537,7 @@ After two weeks of real use, a wiki check, like the 5-day evaluation:
 
 ## Not verified yet
 
-- **CSP on `file://`.** How Firefox and Chromium apply `script-src 'self'` to pages opened from a file. If `'self'` blocks the site's own scripts there, the fallback is no `<meta>` CSP but still no inline scripts, or serving the folder read-only from the existing frontend's server.
+- **CSP on `file://`: checked in Chromium.** Opened from a file, the site's own scripts and data files load under `script-src 'self'`, the inline JSON block reads, and an inline script injected on purpose is blocked. Firefox isn't checked yet; if its `'self'` blocks the site's scripts there, the fallback is serving the folder read-only from the existing frontend's server.
 - **Firefox's file rules.** That classic `<script src>` files load from `file://` under Firefox's strict file origin policy, including the snap package.
 - **24 tools.** That Claude still picks the right tool in Claude Desktop with 24 tools.
 - **Size budgets.** The 600-character, 40-statement and 12,000-character budgets, to tune after the first compile.
