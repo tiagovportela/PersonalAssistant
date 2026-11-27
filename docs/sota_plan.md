@@ -17,6 +17,12 @@ It rests on three things:
 4. **Controls outside the model hold; filters and click-approvals don't.** Tool allowlists and origin labels held under adaptive attack. A content screen caught none of 360 plainly worded false facts. People approve 93% to 97% of prompts and caught 13.6% of planted dangerous ones.
 5. **The labs measure before they change anything.** Written thresholds, repeated runs, a baseline arm, graders checked against a person, and every prompt or model change treated as a release.
 
+## The layer after the plan
+
+![The layer after the plan: sources pass through an intake step that cleans text and records origin; the store keeps raw records with origin, verdicts, a search log and run records; agents reach it only through checked tools; a checker run and a notes check sit before what I see; an evaluation band gates every change.](sota_plan.svg)
+
+Plain boxes exist today; green ones are added or changed by the plan. A local embedding model for search isn't drawn, since step 4 adopts one only if my own search set shows it helps.
+
 ## Where the layer stands
 
 ### Already in line with the evidence

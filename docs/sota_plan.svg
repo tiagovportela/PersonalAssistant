@@ -1,0 +1,156 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1210 880" width="1210" height="880" role="img" aria-label="Sources feed an intake step that cleans text and records origin, the store keeps raw records with origin and verdicts, agents read and write only through checked tools, a checker run and a notes check sit between the writers and what I see, and an evaluation band gates every change.">
+        <style>
+text{font-family:Inter,"Segoe UI",system-ui,sans-serif}
+.box{fill:#fff;stroke:#1c2422;stroke-width:1.3}.box.new{fill:#e2f1ee;stroke:#0b6e63;stroke-width:1.6}
+.grp{fill:#eef1ef;stroke:#9aa7a3;stroke-width:1.2}.grp.new{fill:none;stroke:#0b6e63;stroke-dasharray:6 4}
+.t{fill:#1c2422;font-size:13px;font-weight:600}.d{fill:#1c2422;font-size:12px}.m{fill:#5d6b67;font-size:11.5px}
+.n{fill:#0b6e63;font-weight:600}
+.ln{stroke:#1c2422;stroke-width:1.4;fill:none}.ln.new{stroke:#0b6e63;stroke-width:1.6}
+.ah{fill:#1c2422}.ah.new{fill:#0b6e63}
+</style>
+<rect x="0" y="0" width="1210" height="880" fill="#ffffff"/>
+<rect x="20" y="846" width="26" height="14" rx="3" class="box"/><text x="54" y="858" class="d">exists today</text>
+<rect x="150" y="846" width="26" height="14" rx="3" class="box new"/><text x="184" y="858" class="d">added or changed by the plan</text>
+<defs>
+          <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+          <marker id="an" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah new"/></marker>
+        </defs>
+
+        <!-- column A: local sources -->
+        <text x="20" y="50" class="m">Local sources</text>
+        <rect x="20" y="64" width="180" height="74" rx="6" class="box"/>
+        <text x="32" y="88" class="t">Work on the laptop</text>
+        <text x="32" y="108" class="d">Git · Claude Code sessions</text>
+        <text x="32" y="126" class="d">Firefox · app usage</text>
+        <rect x="20" y="160" width="180" height="50" rx="6" class="box new"/>
+        <text x="32" y="181" class="t">Meeting audio</text>
+        <text x="32" y="199" class="d">two tracks, when I record</text>
+        <line x1="200" y1="101" x2="288" y2="101" class="ln" marker-end="url(#a)"/>
+        <text x="244" y="94" text-anchor="middle" class="m">hourly</text>
+        <line x1="200" y1="185" x2="288" y2="185" class="ln new" marker-end="url(#an)"/>
+
+        <!-- column B: the layer -->
+        <rect x="270" y="30" width="490" height="630" rx="10" class="grp"/>
+        <text x="286" y="51" class="m">The layer: one service on my laptop</text>
+
+        <rect x="290" y="64" width="450" height="74" rx="6" class="box new"/>
+        <text x="304" y="87" class="t">Intake</text>
+        <text x="304" y="107" class="d">strips hidden text · finds secrets: patterns, then a local model</text>
+        <text x="304" y="125" class="d">records where each item came from: mine, others' or web</text>
+
+        <rect x="290" y="160" width="230" height="50" rx="6" class="box new"/>
+        <text x="304" y="181" class="t">Meetings</text>
+        <text x="304" y="199" class="d">voice detection → speech model</text>
+        <line x1="390" y1="160" x2="390" y2="140" class="ln new" marker-end="url(#an)"/>
+        <text x="400" y="154" class="m">transcript</text>
+
+        <line x1="600" y1="138" x2="600" y2="234" class="ln" marker-end="url(#a)"/>
+        <text x="610" y="190" class="m">records with origin</text>
+
+        <rect x="290" y="236" width="450" height="150" rx="6" class="box"/>
+        <text x="304" y="259" class="t">Store (SQLite): raw, dated records are the truth</text>
+        <text x="304" y="282" class="d">events · evidence <tspan class="n">with origin</tspan> · claims with versions</text>
+        <text x="304" y="304" class="d">a claim's <tspan class="n">subject, true from, replaced by</tspan></text>
+        <text x="304" y="326" class="d">wiki pages and versions · <tspan class="n">support verdict per citation</tspan></text>
+        <text x="304" y="348" class="d"><tspan class="n">search log · run records: model, instructions, cost</tspan></text>
+        <text x="304" y="370" class="m">labels are worked out when read, never stored</text>
+
+        <line x1="515" y1="388" x2="515" y2="412" class="ln" marker-start="url(#a)" marker-end="url(#a)"/>
+
+        <rect x="290" y="414" width="450" height="130" rx="6" class="box"/>
+        <text x="304" y="437" class="t">MCP tools: code checks every read and write</text>
+        <text x="304" y="459" class="d">search: <tspan class="n">fair ranking across indexes, keywords and questions</tspan></text>
+        <text x="304" y="479" class="d">claims: <tspan class="n">three commitment lookups, old values retired by rule</tspan></text>
+        <text x="304" y="499" class="d">wiki: <tspan class="n">quote found in its source, label from weakest citation</tspan></text>
+        <text x="304" y="521" class="m">no delete tools · confidential items never returned</text>
+
+        <rect x="290" y="566" width="215" height="74" rx="6" class="box"/>
+        <text x="304" y="589" class="t">Frontend</text>
+        <text x="304" y="609" class="d">the only place I delete,</text>
+        <text x="304" y="627" class="d">label and set retention</text>
+        <rect x="525" y="566" width="215" height="74" rx="6" class="box new"/>
+        <text x="539" y="589" class="t">Forget test</text>
+        <text x="539" y="609" class="d">a deleted item is gone from tools,</text>
+        <text x="539" y="627" class="d">indexes, wiki, logs and test copies</text>
+
+        <!-- bus -->
+        <line x1="800" y1="170" x2="800" y2="574" class="ln"/>
+        <line x1="740" y1="480" x2="800" y2="480" class="ln"/>
+        <line x1="800" y1="170" x2="828" y2="170" class="ln" marker-end="url(#a)"/>
+        <line x1="800" y1="250" x2="828" y2="250" class="ln new" marker-end="url(#an)"/>
+        <line x1="800" y1="330" x2="828" y2="330" class="ln" marker-end="url(#a)"/>
+        <line x1="800" y1="502" x2="828" y2="502" class="ln" marker-end="url(#a)"/>
+        <line x1="800" y1="574" x2="828" y2="574" class="ln" marker-end="url(#a)"/>
+        <text x="770" y="622" class="m">tools over a local socket</text>
+
+        <!-- column C: online sources and agents -->
+        <rect x="830" y="36" width="300" height="52" rx="6" class="box"/>
+        <text x="842" y="57" class="t">Online sources, read live, never copied</text>
+        <text x="842" y="76" class="d">Gmail · Calendar · Drive · Notion · GitHub · Chat</text>
+        <line x1="980" y1="88" x2="980" y2="140" class="ln" marker-end="url(#a)"/>
+        <text x="990" y="110" class="m">read-only tools, <tspan class="n">fixed list</tspan></text>
+
+        <rect x="820" y="118" width="340" height="266" rx="10" class="grp new"/>
+        <rect x="830" y="142" width="300" height="55" rx="6" class="box"/>
+        <text x="842" y="164" class="t">End-of-day agent (writer)</text>
+        <text x="842" y="183" class="d">reads my day, proposes claims, writes notes</text>
+
+        <line x1="980" y1="197" x2="980" y2="220" class="ln new" marker-end="url(#an)"/>
+        <text x="990" y="214" class="m">new claims</text>
+        <rect x="830" y="222" width="300" height="55" rx="6" class="box new"/>
+        <text x="842" y="244" class="t">Checker run</text>
+        <text x="842" y="263" class="d">another model, no write tools: is it supported?</text>
+        <line x1="980" y1="302" x2="980" y2="279" class="ln new" marker-end="url(#an)"/>
+        <text x="990" y="295" class="m">new statements</text>
+
+        <rect x="830" y="302" width="300" height="55" rx="6" class="box"/>
+        <text x="842" y="324" class="t">Wiki compile run</text>
+        <text x="842" y="343" class="d">one page per run, <tspan class="n">then probe questions</tspan></text>
+        <text x="832" y="376" class="m"><tspan class="n">Unattended runs: pinned model, budget, run record</tspan></text>
+
+        <path d="M1130,170 H1146 V426 H1132" class="ln" marker-end="url(#a)"/>
+        <text x="1126" y="399" text-anchor="end" class="m">the day's notes</text>
+        <rect x="990" y="404" width="140" height="45" rx="6" class="box new"/>
+        <text x="1002" y="423" class="t">Notes check</text>
+        <text x="1002" y="440" class="d">no remote images</text>
+        <line x1="990" y1="426" x2="962" y2="426" class="ln new" marker-end="url(#an)"/>
+        <rect x="830" y="404" width="130" height="45" rx="6" class="box"/>
+        <text x="842" y="431" class="t">Obsidian vault</text>
+
+        <rect x="830" y="472" width="300" height="60" rx="6" class="box"/>
+        <text x="842" y="495" class="t">Chat review: cards drawn by code</text>
+        <text x="842" y="515" class="d"><tspan class="n">ordered by risk, with origin and quote</tspan></text>
+        <line x1="1060" y1="554" x2="1060" y2="534" class="ln" marker-end="url(#a)"/>
+        <text x="1070" y="548" class="m">my clicks</text>
+
+        <rect x="830" y="554" width="140" height="40" rx="6" class="box"/>
+        <text x="842" y="579" class="t">Claude Desktop</text>
+        <rect x="990" y="554" width="140" height="40" rx="20" class="box"/>
+        <text x="1060" y="579" text-anchor="middle" class="t">Me</text>
+        <line x1="990" y1="574" x2="972" y2="574" class="ln" marker-end="url(#a)"/>
+
+        <!-- evaluation band -->
+        <rect x="20" y="690" width="1150" height="130" rx="10" class="grp new"/>
+        <text x="36" y="712" class="m"><tspan class="n">Evaluation, kept on the laptop</tspan></text>
+        <line x1="310" y1="660" x2="310" y2="726" class="ln new" marker-end="url(#an)"/>
+        <text x="320" y="681" class="m">snapshot</text>
+
+        <rect x="200" y="728" width="220" height="70" rx="6" class="box new"/>
+        <text x="214" y="757" class="t">Frozen copy of the store</text>
+        <text x="214" y="777" class="d">under retention and deletion</text>
+        <line x1="420" y1="763" x2="448" y2="763" class="ln new" marker-end="url(#an)"/>
+        <rect x="450" y="728" width="280" height="70" rx="6" class="box new"/>
+        <text x="464" y="757" class="t">Five test sets from my own data</text>
+        <text x="464" y="777" class="d">search · claims · wiki · numbers · attacks</text>
+        <line x1="730" y1="763" x2="758" y2="763" class="ln new" marker-end="url(#an)"/>
+        <rect x="760" y="728" width="170" height="70" rx="6" class="box new"/>
+        <text x="774" y="757" class="t">Three levels</text>
+        <text x="774" y="777" class="d">tools · loop · real run</text>
+        <line x1="930" y1="763" x2="958" y2="763" class="ln new" marker-end="url(#an)"/>
+        <rect x="960" y="728" width="200" height="70" rx="6" class="box new"/>
+        <text x="974" y="757" class="t">Release gate</text>
+        <text x="974" y="777" class="d">repeats · baseline · pass mark</text>
+
+        <path d="M1160,763 H1190 V250 H1162" class="ln new" marker-end="url(#an)"/>
+        <text x="1183" y="650" text-anchor="end" class="m"><tspan class="n">every change to instructions, tools or model</tspan></text>
+      </svg>
