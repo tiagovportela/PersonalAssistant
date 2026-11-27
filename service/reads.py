@@ -25,7 +25,7 @@ GROUPS = {"git.commit": "commits", "git.merge": "merges", "git.push": "pushes", 
 EVENT_KINDS = {"git": "e.type LIKE 'git.%'", "claude_code": "e.type LIKE 'claude_code.%'"}
 # Firefox visits and app spans are many and small: tools summarise them instead of listing them with the work.
 WORK = "type NOT IN ('git.snapshot', 'firefox.visit', 'app.focus', 'app.active', 'app.idle')"
-DEFAULT_SEARCH_KINDS = ["git", "claude_code", "claims", "artifacts", "firefox"]
+DEFAULT_SEARCH_KINDS = ["git", "claude_code", "claims", "artifacts", "wiki", "firefox"]
 NOT_CONFIDENTIAL_PROJECT = ("NOT EXISTS (SELECT 1 FROM labels l WHERE l.item_type = 'project'"
                             " AND l.item_id = {column})")
 
@@ -464,6 +464,10 @@ def get_project(db, args):
         "links": links,
         "found": True,
     }
+    import wiki  # here, not at the top: wiki imports this module
+    page = wiki.for_project(db, pid)
+    if page:
+        result["wiki"] = page
     today = date.today()
     conflicts, conflict_count = contradictions.candidates(db, project=pid, limit=5)
     if conflicts:
@@ -587,6 +591,10 @@ def search(db, args):
             found.append((r["rank"], {"item_type": "artifact", "id": r["id"], "kind": r["kind"], "title": r["title"],
                                       "url": r["url"], "project": r["project_id"], "snippet": r["snip"]}))
 
+    if "wiki" in kinds:
+        import wiki  # here, not at the top: wiki imports this module
+        found += wiki.search_hits(db, query, project, limit)
+
     found.sort(key=lambda pair: pair[0])  # bm25: lower is a better match
     results = [item for _, item in found[:limit]]
     result = {"query": args["query"], "results": results, "found": bool(results),
@@ -594,6 +602,10 @@ def search(db, args):
     if not results:
         result["gaps"] = [f"Nothing matched '{args['query']}' in the local layer. Try other wordings, in Portuguese "
                           "and English, or a file, branch or project name, and run online_lookups before saying not found."]
+        # Recorded so the evaluation can tell whether keyword search is too weak; kept under retention.
+        db.execute("INSERT INTO search_misses (at, query, kinds, project_id) VALUES (?, ?, ?, ?)",
+                   (datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), redact(args["query"]),
+                    json.dumps(sorted(kinds)), project))
     return result
 
 
@@ -912,6 +924,8 @@ def get_metrics(db, args):
                    "note": "Connector availability is seen only when you use one; say which failed."},
         "found": True,
     }
+    import wiki  # here, not at the top: wiki imports this module
+    result["wiki"] = wiki.metrics(db, since)
     usage = app_usage.status(db)
     if usage.get("source_id"):
         result["app_usage"] = {k: usage.get(k) for k in ("on", "mode", "mode_in_use", "extension", "fallback",

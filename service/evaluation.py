@@ -156,6 +156,12 @@ def leak_check(store_path, db, days, active_projects, labelled_texts):
     calls += [("get_project", {"project": p}) for p in sorted(active_projects)]
     calls += [("search", {"query": t, "limit": 50}) for t in labelled_texts[:40]]
     calls += [("read_claude_sessions", {"day": d}) for d in days]
+    import wiki  # also needs the contracts folder
+    calls += [("get_wiki_page", {})]
+    for p in sorted(active_projects):  # each project's wiki page, with every section in full
+        page = wiki.project_page_id(db, p)
+        sections = [s["id"] for s in wiki.get_wiki_page(db, {"page": page}).get("sections", [])]
+        calls += [("get_wiki_page", {"page": page, **({"sections": sections} if sections else {})})]
     found = []
     for name, args in calls:
         output = json.dumps(layer.call_tool(name, args), ensure_ascii=False)

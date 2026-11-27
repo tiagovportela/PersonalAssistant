@@ -6,6 +6,8 @@
 - Unconfirmed claims (proposed or disputed) not changed for `unconfirmed_claim` days.
 - Session notes I haven't confirmed, about days older than `session_note` days.
 - Audit entries and collector runs older than `audit` days.
+- Wiki versions older than `wiki_version` days, except each page's current one, and searches that
+  found nothing, older than `search_miss` days.
 - Then evidence and online references nothing uses any more.
 
 Confirmed claims are kept until I delete them (confirmed_claim is NULL), and
@@ -81,6 +83,14 @@ def run(store_path, now=None):
                 counts["agent_runs"] = db.execute("DELETE FROM eod_runs WHERE started_at < ?", (before,)).rowcount
                 counts["reviews"] = db.execute("DELETE FROM review_batches WHERE posted_at < ? AND status <> 'open'",
                                                (before,)).rowcount
+            before = cutoff(db, "wiki_version", now)
+            if before:
+                counts["wiki_versions"] = db.execute(
+                    "DELETE FROM wiki_versions WHERE written_at < ? AND version <"
+                    " (SELECT MAX(version) FROM wiki_versions w WHERE w.page_id = wiki_versions.page_id)", (before,)).rowcount
+            before = cutoff(db, "search_miss", now)
+            if before:
+                counts["search_misses"] = db.execute("DELETE FROM search_misses WHERE at < ?", (before,)).rowcount
             counts["unused_evidence"] = db.execute(
                 "DELETE FROM evidence WHERE id NOT IN (SELECT evidence_id FROM claim_evidence)").rowcount
             counts["unused_references"] = db.execute(

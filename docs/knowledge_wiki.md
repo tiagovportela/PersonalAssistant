@@ -2,7 +2,7 @@
 
 A knowledge base of my work that agents use first and I read too. Claude compiles one page per project, person and recurring topic from what the layer already holds and from the project's Git repositories. Every statement cites its evidence and shows its label. Pages can include diagrams, such as a user journey through a UI, a request across components or a repository's architecture: agents describe them as data, and the layer draws them as SVG. Agents read and write the wiki only through the layer's MCP tools. The layer renders it as a static HTML site with an interactive graph, for me and for agents that only have files.
 
-Not built yet. This page is the design, and the order to build it in.
+Step 1 of the [build order](#build-order) is built: the store, `read_repo`, `get_wiki_page`, `propose_wiki_update`, the wiki in `search`, `get_project` and `get_metrics`, and search misses (`service/wiki.py`, `service/repos.py`, `service/test_wiki.py`). The rest of this page is design.
 
 ## Why
 
@@ -49,6 +49,8 @@ Three kinds, each with a stable id (a slug):
 | `person` | person in a commitment or claim, by email | Claude, through `propose_wiki_update` |
 | `topic` | theme that recurs across at least two projects, e.g. *Google OAuth* | Claude, through `propose_wiki_update` |
 
+A project's page has the project's id. If another page already took that id, the project's page is `<id>-project`.
+
 There are no day pages: the vault has them. A project's timeline links to its days in Obsidian with `obsidian://` links.
 
 Each page has **compiled** sections, which Claude writes, and **generated** sections, which code computes from the store each time the page is read. Lists that are just queries stay always current and cost no tokens.
@@ -75,7 +77,7 @@ A compiled section is a list of blocks: **statements** (a sentence or a bullet) 
 | `claim_id` | a claim, with its current label |
 | `event_id` | a local event (expires with the event, after 90 days) |
 | `commit` + `repo` (+ `path`) | a commit, or a file at that commit. Survives event retention as long as the repository has it. |
-| `page` (+ `section`) | another wiki page |
+| `page` (+ `section`) | another wiki page. A page is a link, not evidence: every statement also cites a claim, an event or a commit. |
 
 A statement's **label** is worked out at read time from its citations, best first:
 
@@ -94,7 +96,7 @@ So the long-term content of the wiki is what's verified, what's in a repository,
 
 ## The tools
 
-Four new tools in the layer's MCP server, not a separate server, so there's one allowlist, one audit trail and one confidential filter. Two existing tools change. The total goes from 20 to 24. Each description says when to use the tool, since more tools make tool choice harder.
+Four new tools in the layer's MCP server, not a separate server, so there's one allowlist, one audit trail and one confidential filter. Two existing tools change. The total goes from 20 to 24; step 1 brings it to 23, and `wiki_lint` comes in step 4. Each description says when to use the tool, since more tools make tool choice harder.
 
 | Tool | Kind | What it does |
 |---|---|---|
@@ -157,7 +159,7 @@ Typed links: `project` (the page belongs to it), `person` (mentions them), `topi
 Rules, enforced by the layer:
 - **Allowlisted only.** Only repositories that are enabled sources and linked to the project. Never a confidential project's repository.
 - **Committed files only.** Files are read with `git show <commit>:<path>`, so untracked files such as `.env` are never read, and every citation names an exact commit.
-- **Secret-looking files are skipped.** Paths like `.env*`, `*.pem`, `*.key`, `id_rsa*`, `credentials*` or `secrets*` are refused. Binary files and files over the result cap are refused too, except documentation images.
+- **Secret-looking files are skipped.** Paths like `.env*`, `*.pem`, `*.key`, `id_rsa*`, `credentials*` or `secrets*` are refused. Binary files and files over 1 MB are refused too, except documentation images (step 3). Text over 30,000 characters comes back cut, with `truncated` set. Names that look like secrets are also left out of folder listings.
 - **Documentation images only.** A PNG, JPEG, GIF or WebP file comes back as an image only when the README or a file in `docs/` links to it: an existing architecture diagram, a mockup, a screenshot of a screen. Images can't be redacted, so images that aren't documentation are refused, and the result says the image wasn't redacted. Images over the model's size limit are refused.
 - **Secrets are redacted** with `service/redact.py`, as commit messages are today.
 - Git runs the way the collector runs it, with `GIT_OPTIONAL_LOCKS=0`, so it never takes a lock.
@@ -203,8 +205,8 @@ Read-only. It lists, per page and section, what to fix, and Claude fixes it with
 
 ### `search`
 
-- **A new full-text table over wiki sections:** title, heading and key terms weighted above the text, with the same accent folding as today (`unicode61 remove_diacritics 2`). A diagram's title, caption and labels count as its section's text, so "Pub/Sub" finds a sequence diagram.
-- **Only current versions are indexed,** and a view filters out statements and pages that would be hidden.
+- **Two new full-text tables,** with the same accent folding as today (`unicode61 remove_diacritics 2`): one row per statement, with its section's heading weighted above its text, and one row per page, for its title, key terms and summary. A diagram's title, caption and labels count as its section's text, so "Pub/Sub" finds a sequence diagram.
+- **Only current versions are indexed.** Each match is checked against the hiding rules when it's found, so a match on a statement Claude may not see isn't shown. A project filter keeps the project's page and the pages that link to it. The date filters don't apply to the wiki.
 - **Results go into the same ranked list `search` already builds** (`service/reads.py:517`), so a wiki section competes with claims and commits:
   - `item_type` `wiki`;
   - `page` and `section`, with the heading;
@@ -219,7 +221,7 @@ The `kinds` filter, the project and date filters, and `online_lookups` work as n
 
 That's three calls and a few thousand tokens.
 
-**Search misses.** A search with no local results is recorded in `search_misses`: the query, kinds, project and time, kept 90 days. This is content, not audit, so it's in the frontend and under retention. `get_metrics` gives the count. This is the measurement the architecture's "keyword first" decision needs.
+**Search misses.** A search with no local results is recorded in `search_misses`, including one whose only matches were hidden: the query, kinds, project and time, kept 90 days. This is content, not audit, so it's in the frontend and under retention. `get_metrics` gives the count. This is the measurement the architecture's "keyword first" decision needs.
 
 **Meaning-based search** comes only if the 5-day evaluation and the search misses show keyword search is too weak. In that case:
 - a small multilingual model on the CPU, benchmarked like Whisper in `bench/`;
@@ -423,24 +425,24 @@ A new Wiki section:
 
 ## The store (schema 8)
 
-`schema/migrations/008_wiki.sql`:
+`schema/migrations/008_wiki.sql`, built in step 1. The diagram and image tables come with step 3.
 
 | Table | Holds |
 |---|---|
-| `wiki_pages` | id, kind, title, summary, `project_id` or `email`, `key_terms`, created_at |
-| `wiki_versions` | page, version, written_at, written_by (`claude` or `me`), the eod or compile run, reason, `built_from` (JSON) |
+| `wiki_pages` | id, kind, title, `project_id` or `email`, created_at |
+| `wiki_versions` | page, version, summary, `key_terms`, `built_from` (JSON: the commit read in each repository, by source id), written_by (`claude` or `me`), reason, written_at |
 | `wiki_sections` | page, version, section id, position, heading, summary |
-| `wiki_statements` | page, version, section, position, style, text |
-| `wiki_diagrams` | page, version, section, position, id, type, title, caption, the description (JSON), the last layout warnings |
-| `wiki_images` | page, version, section, position, repo, commit, path, caption |
+| `wiki_statements` | section, position, style, text |
+| `wiki_diagrams` (step 3) | page, version, section, position, id, type, title, caption, the description (JSON), the last layout warnings |
+| `wiki_images` (step 3) | page, version, section, position, repo, commit, path, caption |
 | `wiki_citations` | a statement, or a diagram (optionally one of its nodes, edges, steps or messages); and one of: claim, event, commit + repo (+ path), page (+ section) |
-| `wiki_links` | page, version, link type, target |
+| `wiki_links` | statement, target page. A link's type is the target page's kind, and links count only from statements Claude may see. |
 | `wiki_notes` | page, my notes, changed_at |
 | `search_misses` | at, query, kinds, project |
-| `wiki_fts` | full-text index over current sections, keyed on the sections' `seq` |
+| `wiki_fts`, `wiki_pages_fts` | full-text indexes over the current versions: statements, keyed on their `seq`, and pages' titles, key terms and summaries, keyed on the version's `seq` |
 
 It also needs:
-- **Views:** `wiki_for_claude` applies the hiding rules above, as `claims_for_claude` does for claims.
+- **Hiding** is worked out in `service/wiki.py` for each statement, from its citations, through `claims_shareable`, `events_for_claude` and the repositories `read_repo` may read. A view can't do it, since labels depend on every citation.
 - **Retention:** new kinds `wiki_version` (past versions, 90 days) and `search_miss` (90 days). Pages and their current version stay until I delete them.
 - **Audit trail:** a new action, `read_repo`, alongside the existing `propose` and `delete`.
 - **Rebuilt tables:** the audit and retention tables' `CHECK` constraints change. SQLite can't change those in place, so the migration rebuilds both tables with their rows, as `003_audit_confidential_reads.sql` did. `store.py` backs the store up first, as for every migration.
@@ -510,7 +512,7 @@ After two weeks of real use, a wiki check, like the 5-day evaluation:
 
 ## Build order
 
-1. **Store and tools:**
+1. **Store and tools** (built):
    - migration 8;
    - `get_wiki_page`, `propose_wiki_update` and `read_repo`, with validation and tests;
    - the `wiki` kind in `search`, and `wiki` in `get_project`;
@@ -529,7 +531,7 @@ After two weeks of real use, a wiki check, like the 5-day evaluation:
    - search, timeline, and the automatic rebuild.
 4. **Upkeep:**
    - `wiki_lint`;
-   - the frontend's Wiki section;
+   - the frontend's Wiki section, and the two new retention kinds on its Retention page;
    - the metrics;
    - the two-week check.
 5. **Only if the misses show it's needed:** meaning-based search over local text.
