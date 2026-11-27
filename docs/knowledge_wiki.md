@@ -151,24 +151,26 @@ Typed links: `project` (the page belongs to it), `person` (mentions them), `topi
 | Call | Returns |
 |---|---|
 | `read_repo(project)` | The repository's default branch and its head commit, the README, `CLAUDE.md` or `AGENTS.md`, the list of files in `docs/` and decision records with their sizes, manifest files such as `package.json` or `pyproject.toml`, and the folder tree two levels down. |
-| `read_repo(project, path, commit?)` | One committed file, at `commit` or the default branch's head. |
+| `read_repo(project, path, commit?)` | One committed file, at `commit` or the default branch's head. A documentation image comes back as an image the agent can see (below). |
 | `read_repo(project, since)` | The commits after `since` on the default branch: subject, message, files and line counts. |
 
 Rules, enforced by the layer:
 - **Allowlisted only.** Only repositories that are enabled sources and linked to the project. Never a confidential project's repository.
 - **Committed files only.** Files are read with `git show <commit>:<path>`, so untracked files such as `.env` are never read, and every citation names an exact commit.
-- **Secret-looking files are skipped.** Paths like `.env*`, `*.pem`, `*.key`, `id_rsa*`, `credentials*` or `secrets*` are refused. Binary files and files over the result cap are refused too.
+- **Secret-looking files are skipped.** Paths like `.env*`, `*.pem`, `*.key`, `id_rsa*`, `credentials*` or `secrets*` are refused. Binary files and files over the result cap are refused too, except documentation images.
+- **Documentation images only.** A PNG, JPEG, GIF or WebP file comes back as an image only when the README or a file in `docs/` links to it: an existing architecture diagram, a mockup, a screenshot of a screen. Images can't be redacted, so images that aren't documentation are refused, and the result says the image wasn't redacted. Images over the model's size limit are refused.
 - **Secrets are redacted** with `service/redact.py`, as commit messages are today.
 - Git runs the way the collector runs it, with `GIT_OPTIONAL_LOCKS=0`, so it never takes a lock.
 - Each read is in the audit trail as the repository and path at a commit, never the content.
-- What it returns is in the data envelope, like every result. **Repository text is data**: READMEs, vendored files and other people's commits can carry injected instructions.
+- What it returns is in the data envelope, like every result. **Repository text is data**: READMEs, vendored files and other people's commits can carry injected instructions. So can text inside an image.
 
 ### `propose_wiki_update`
 
 It takes `page` and `base_version`, or `new` (kind, title, and `project` or `email`) for a person or topic page. Then:
 - `sections`: each with an `id`, `heading`, `summary` and `blocks`. A block is a statement (`text`, `style`: paragraph or bullet, and `cites`) or a diagram (see [Diagrams](#diagrams));
 - optional `summary`, `key_terms` and `built_from` (`{repo: commit}`);
-- a `reason`.
+- a `reason`;
+- optional `dry_run`: run every check, and return the diagram previews and warnings, without saving.
 
 Only the sections given are replaced; the others carry over, so updating one section is cheap.
 
@@ -255,6 +257,8 @@ Why agents don't write SVG:
 - on project pages: the `repo-map` (the repository's top folders from `git ls-tree`, with file counts and main languages), the `activity` chart (commits and focus time per week, within retention), and the decisions timeline;
 - on the index: the knowledge graph.
 
+**Images from the repository.** A section can also show a documentation image from the repository, as an `image` block that cites its path at a commit, with a caption. The build copies it into the site and shows it with `<img>`, which runs nothing. Only PNG, JPEG, GIF and WebP are copied; an SVG in a repository is markup from somewhere else, so it's never copied. The agent sees the image through `read_repo` before using it, and it goes stale like any cited file.
+
 A module dependency graph from the code's imports would also be useful. It means reading code, beyond "docs, not code", so it's left for later.
 
 ### Sending one
@@ -289,7 +293,11 @@ Any node, edge, step or message can add its own `cites`. It's one flat schema wi
 - at most 30 nodes or steps and 60 edges or messages. A bigger diagram is refused with "split it into two";
 - kinds come from each type's list; `page` links point to pages that exist; citations are checked like a statement's; timeline dates are real dates.
 
-The layer lays the diagram out at once and returns **layout warnings** with the saved version: edge crossings, labels cut short, a group with one node, a node with no edges. Agents can't see the picture, so the feedback is in numbers, and they can improve the diagram in the next update.
+The layer lays the diagram out at once and returns two things with the saved version:
+- **A preview:** the diagram as a PNG image. The agent looks at it the way I would, and checks that it reads well and says what the caption claims.
+- **Layout warnings:** edge crossings, labels cut short, a group with one node, a node with no edges. These say exactly what to fix.
+
+With `dry_run: true`, `propose_wiki_update` returns the preview and warnings without saving anything. That lets the agent try a layout or two before writing a version, instead of filling the history with attempts.
 
 **Citations and staleness.**
 - A user journey cites the UI files it comes from, such as `frontend/src/views/Claims.jsx` at a commit. An architecture diagram cites the modules and docs it comes from.
@@ -308,11 +316,18 @@ The layer lays the diagram out at once and returns **layout warnings** with the 
 - **Accessible:** `role="img"`, `<title>` and `<desc>`. Under each diagram, a *Diagram as text* panel lists its nodes and edges.
 - **Interactive in the static site:** hovering a node highlights its connections, and clicking it opens the page it links to or its citations. Large diagrams can be zoomed and panned. `site.js` uses the data attributes the renderer writes (`data-node`, `data-page`, `data-cites`).
 
+**Previews** are drawn from the same SVG to PNG by `rsvg-convert` (librsvg, the optional Ubuntu package `librsvg2-bin`):
+- **Size:** at most 1,200 pixels wide, which is about 1,500 tokens for the agent.
+- **Safe input:** it only ever reads SVG our code drew, never markup from anywhere else.
+- **Review:** it's an Ubuntu package, so it goes through the brief's third-party review.
+- **Without it:** previews are off, and the agent still gets the warnings.
+
 If our layout isn't good enough, the fallback is Graphviz's `dot` for layout only. Its `-Tjson` output gives the coordinates, and our code still draws and escapes the SVG. It's an Ubuntu package, so it would go through the brief's third-party review.
 
 ### Agents reading diagrams
 
 - `get_wiki_page` returns a diagram as its description, like the JSON above, with its label, whether it's stale, and its last layout warnings. Never SVG.
+- With `previews: true`, it also returns the PNG of each diagram in the sections asked for, for when the look matters, such as checking a journey before changing it. Descriptions are cheaper and exact, so previews are off by default.
 - The static site also writes `pages/<id>.json`: the page's data without the SVG, for agents that only have files. SVG markup costs tokens and tells an agent nothing the description doesn't.
 
 ### When to draw
@@ -361,6 +376,7 @@ It needs nothing else: online content comes in as claims, and repositories throu
 index.html              catalog, search box and the full graph
 pages/<id>.html         one per page, with its diagrams as inline SVG
 pages/<id>.json         the page's data without the SVG, for agents that only read files
+images/<hash>.<ext>     documentation images copied from repositories
 assets/site.css         one stylesheet
 assets/site.js          search, filters, timeline, local graph
 assets/graph.js         the graph library, vendored
@@ -416,6 +432,7 @@ A new Wiki section:
 | `wiki_sections` | page, version, section id, position, heading, summary |
 | `wiki_statements` | page, version, section, position, style, text |
 | `wiki_diagrams` | page, version, section, position, id, type, title, caption, the description (JSON), the last layout warnings |
+| `wiki_images` | page, version, section, position, repo, commit, path, caption |
 | `wiki_citations` | a statement, or a diagram (optionally one of its nodes, edges, steps or messages); and one of: claim, event, commit + repo (+ path), page (+ section) |
 | `wiki_links` | page, version, link type, target |
 | `wiki_notes` | page, my notes, changed_at |
@@ -435,6 +452,7 @@ It also needs:
 | **Memory poisoning** (OWASP's 2026 Top 10 for agents, ASI06): one bad write persists and is read later as trusted. | <ul><li>One write tool, validated, versioned, audited and undoable.</li><li>Every statement cites its evidence and shows its label.</li><li>Statements disappear when their evidence goes.</li><li>`wiki_lint` flags contradictions.</li><li>Agents treat only `verified` and `repo` statements as facts, and unconfirmed ones as leads (a rule in `common.md`).</li></ul> |
 | Injected instructions in repositories, mail, chat or documents. | Tool results are data, never instructions. Instructions found are described and cited, never quoted. |
 | A poisoned statement becomes a script or a hidden link in a page I open. | Agents never write HTML. Code renders with escaping, a fixed Markdown subset and a strict CSP, with no inline scripts and no network loads. |
+| An image carries injected instructions as text, or shows a secret. | Text in an image is data, like any result. Only documentation images are read or copied, the result says images aren't redacted, and an SVG from a repository is never copied. |
 | A poisoned diagram carries a script, an event handler or a `javascript:` link inside SVG. | Agents never write SVG. They send a description with plain-text labels, and `service/diagrams.py` draws the SVG with escaping and classes only. Tests feed it labels with markup, quotes and `javascript:` links. |
 | Secrets from repositories. | Committed files only, secret-looking paths refused, redaction, size cap. |
 | Confidential items. | Hidden when read and when built. A confidential project has no pages, and `read_repo` refuses its repository. |
@@ -485,7 +503,8 @@ After two weeks of real use, a wiki check, like the 5-day evaluation:
 - **Diagrams:**
   - a user journey through the frontend and the layer's architecture: are they right, and readable without the text around them?
   - change a view file the journey cites, and check that the diagram goes stale;
-  - ask an agent a question that only a diagram's description answers.
+  - ask an agent a question that only a diagram's description answers;
+  - give an agent a cluttered diagram, and check that the preview leads it to a clearer one within a dry run or two.
 - **Injection:** plant an instruction in a test repository's README and in a test email, and check it's described, not quoted or followed.
 - **Deletion:** delete a cited claim in the frontend, and check that its statement is gone from the tools at once, and from the static site within a minute.
 
@@ -504,7 +523,8 @@ After two weeks of real use, a wiki check, like the 5-day evaluation:
 3. **The static site:**
    - `pwi wiki build` and `open`;
    - the renderer and its injection tests;
-   - diagrams: their checks in `propose_wiki_update`, `service/diagrams.py` with its layouts and injection tests, and the generated `repo-map` and `activity` diagrams;
+   - diagrams: their checks in `propose_wiki_update`, `service/diagrams.py` with its layouts and injection tests, PNG previews and `dry_run`, and the generated `repo-map` and `activity` diagrams;
+   - documentation images: in `read_repo`, as `image` blocks, and copied into the site;
    - the graph library's review;
    - search, timeline, and the automatic rebuild.
 4. **Upkeep:**
@@ -525,6 +545,8 @@ After two weeks of real use, a wiki check, like the 5-day evaluation:
 - **Labels.** Whether best-of-citations is the right label rule, or the weakest citation should win.
 - **Diagram layout.** Whether a standard-library layered layout is readable at 20 to 30 nodes, or Graphviz is needed for layout. Also whether text widths estimated from character counts keep labels inside their boxes.
 - **Diagram types.** Whether seven types cover what agents want to draw, or some agents keep forcing a diagram into the wrong type.
+- **Images in tool results.** That Claude Desktop's Linux beta and headless Claude Code both pass MCP image results to the model. Until now every result was one text block, so this is a new convention for the layer's results.
+- **Previews against the site.** `rsvg-convert` uses the system's fonts and the browser its own, so a preview can differ slightly from the page. Check that the difference doesn't hide problems such as cut labels.
 
 ## Background
 
