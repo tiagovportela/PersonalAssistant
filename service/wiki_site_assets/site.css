@@ -1,0 +1,99 @@
+/* The wiki site's look. Colours are tokens, redefined for dark mode. Classes only: the CSP allows no inline styles. */
+:root {
+  --bg: #fbfaf7; --fg: #1d1d1b; --muted: #6b6860; --line: #e3e0d8; --card: #ffffff; --accent: #2f5d8a;
+  --project: #2f5d8a; --topic: #8a5a2f; --person: #3d7a4f;
+  --verified: #2e7d4f; --repo: #2f5d8a; --unconfirmed: #9a6b00; --disputed: #b23b3b; --stale: #9a6b00;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161614; --fg: #e9e6df; --muted: #a39f95; --line: #34322d; --card: #1f1e1b; --accent: #8db4dc;
+    --project: #8db4dc; --topic: #dcae86; --person: #8fcf9f;
+    --verified: #7fcf9d; --repo: #8db4dc; --unconfirmed: #e0b54a; --disputed: #ef8a8a; --stale: #e0b54a;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+a { color: var(--accent); }
+main { max-width: 980px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 1.9rem; line-height: 1.2; margin: 4px 0 8px; }
+h2 { font-size: 1.15rem; margin: 32px 0 8px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+code { background: var(--line); border-radius: 4px; padding: 0 4px; font-size: 0.92em; }
+.top { position: sticky; top: 0; z-index: 2; display: flex; gap: 12px; align-items: center; padding: 10px 16px;
+  background: var(--card); border-bottom: 1px solid var(--line); }
+.home { font-weight: 600; text-decoration: none; white-space: nowrap; }
+#search { flex: 1; min-width: 0; max-width: 520px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--bg); color: var(--fg); font: inherit; }
+.results { position: absolute; top: 100%; left: 16px; right: 16px; max-width: 760px; max-height: 70vh; overflow: auto;
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15); }
+.results a { display: block; padding: 8px 12px; text-decoration: none; color: var(--fg); border-bottom: 1px solid var(--line); }
+.results a:hover { background: var(--bg); }
+.snippet { display: block; color: var(--muted); font-size: 0.88rem; }
+.kind, .meta, .built, .section-summary, .empty { color: var(--muted); font-size: 0.9rem; }
+.meta { margin-left: 8px; }
+.summary { font-size: 1.05rem; color: var(--muted); }
+.stale { border-left: 4px solid var(--stale); background: var(--card); padding: 8px 12px; margin: 12px 0; }
+.notes { border-left: 4px solid var(--verified); background: var(--card); padding: 4px 12px; }
+.toc ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.9rem; }
+.statement { margin: 6px 0; }
+.label { display: inline-block; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em;
+  padding: 0 6px; border-radius: 10px; border: 1px solid currentColor; vertical-align: 1px; }
+.label.verified { color: var(--verified); } .label.repo { color: var(--repo); }
+.label.unconfirmed { color: var(--unconfirmed); } .label.disputed { color: var(--disputed); } .label.stale { color: var(--stale); }
+.cites { margin-left: 6px; }
+.cite { font-size: 0.78rem; color: var(--muted); margin-right: 6px; white-space: nowrap; }
+a.cite { color: var(--accent); }
+.missing { text-decoration: underline dotted; color: var(--muted); }
+.timeline { list-style: none; padding-left: 0; border-left: 2px solid var(--line); margin-left: 6px; }
+.timeline > li { padding-left: 14px; margin-bottom: 10px; }
+.month { font-weight: 600; font-size: 0.9rem; }
+.when { color: var(--muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; margin-right: 6px; }
+.activity { border-collapse: collapse; font-size: 0.9rem; }
+.activity td, .activity th { padding: 2px 10px 2px 0; text-align: left; }
+.activity meter { width: 160px; }
+.aliases .kind { display: inline-block; min-width: 110px; }
+.filters { display: flex; gap: 16px; margin: 8px 0; color: var(--muted); }
+.catalog { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0 24px; }
+.catalog .meta { display: block; margin-left: 0; }
+.graph { width: 100%; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+.graph.full { height: 620px; } .graph.local { height: 360px; }
+.graph line { stroke: var(--line); stroke-width: 1.5; }
+.graph .node circle { fill: var(--project); stroke: var(--card); stroke-width: 2; }
+.graph .node.topic circle { fill: var(--topic); } .graph .node.person circle { fill: var(--person); }
+.graph .node.unwritten circle { fill-opacity: 0.35; }
+.graph .node.stale circle { stroke: var(--stale); stroke-width: 3; }
+.graph .node.here circle { stroke: var(--fg); stroke-width: 3; }
+.graph .node text { fill: var(--fg); font-size: 12px; pointer-events: none; }
+.graph.focused .node { opacity: 0.25; } .graph.focused .node.near { opacity: 1; }
+.graph.focused line { opacity: 0.2; } .graph line.near { stroke: var(--accent); opacity: 1; }
+.hidden { display: none; }
+/* Diagrams: drawn by service/diagrams.py with classes only. */
+figure { margin: 16px 0; }
+figure figcaption { color: var(--muted); font-size: 0.9rem; margin-top: 6px; }
+figure.image img { max-width: 100%; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.dg-scroll { overflow: auto; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.dg-scroll svg { display: block; max-width: none; }
+details { font-size: 0.88rem; color: var(--muted); margin-top: 4px; }
+.dg text { font: 13px system-ui, sans-serif; fill: var(--fg); text-anchor: middle; }
+.dg .start { text-anchor: start; }
+.dg-node rect, .dg-node polygon, .dg-node path { fill: var(--card); stroke: var(--project); stroke-width: 1.5; }
+.dg-node.decision polygon { stroke: var(--topic); }
+.dg-node.store path, .dg-node.data polygon { stroke: var(--person); }
+.dg-node.external rect { stroke-dasharray: 5 4; }
+.dg-node.pain rect { stroke: var(--disputed); }
+.dg-pain { fill: var(--disputed); } .dg .dg-pain-mark { fill: #fff; font-weight: 700; }
+.dg-edge { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.dg-edge.async, .dg-edge.reply { stroke-dasharray: 6 4; } .dg-edge.data { stroke: var(--person); }
+.dg-arrowhead { fill: var(--muted); }
+.dg .dg-edge-label, .dg .dg-note, .dg .dg-result, .dg .dg-role, .dg .dg-date { font-size: 11px; fill: var(--muted); }
+.dg .dg-edge-label { paint-order: stroke; stroke: var(--card); stroke-width: 4px; stroke-linejoin: round; }
+.dg-group rect { fill: none; stroke: var(--topic); stroke-dasharray: 4 3; }
+.dg .dg-group-label, .dg .dg-lane-label { text-anchor: start; font-size: 12px; fill: var(--topic); }
+.dg-lane rect { fill: var(--bg); stroke: none; }
+.dg-lifeline, .dg-tree-line, .dg-tick { stroke: var(--line); stroke-dasharray: 4 4; fill: none; }
+.dg-axis { stroke: var(--muted); stroke-width: 2; } .dg-node.item circle { fill: var(--project); }
+.dg-node[data-page] { cursor: pointer; }
+.dg.focused .dg-node { opacity: 0.35; } .dg.focused .dg-node.near { opacity: 1; }
+.dg.focused .dg-edge { opacity: 0.25; } .dg .dg-edge.near { stroke: var(--accent); opacity: 1; }
+@media (max-width: 640px) {
+  .graph.full { height: 420px; } .home { font-size: 0.95rem; } h1 { font-size: 1.5rem; }
+}

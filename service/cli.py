@@ -41,6 +41,8 @@ frontend exists. install.py puts a `pwi` launcher in ~/.local/bin.
                            written yet (at most 5; --max N). --page ID for one page, --all for every project's
                            page. It also runs by itself after each end-of-day run
     pwi wiki status        the wiki's pages, which are due, and the last compile runs
+    pwi wiki build         build the wiki's static site now (the service rebuilds it within a minute of a change)
+    pwi wiki open          open the static site in the browser
 """
 
 import sys
@@ -66,6 +68,7 @@ import cloud_sessions  # noqa: E402
 import collect  # noqa: E402
 import eod  # noqa: E402
 import wiki_compile  # noqa: E402
+import wiki_site  # noqa: E402
 import evaluation  # noqa: E402
 import gnome_extension  # noqa: E402
 import google_signin as google  # noqa: E402
@@ -314,6 +317,16 @@ def eod_command(db, args):
 
 def wiki_command(db, args):
     try:
+        if args.step in ("build", "open"):
+            if args.step == "build" or not (wiki_site.SITE_DIR / "index.html").exists():
+                done = wiki_site.build(db)
+                store.set_setting(db, "wiki.site_fingerprint", wiki_site.fingerprint(db))
+                print(f"Built {done['pages']} pages ({done['written']} written) in {done['path']}.")
+            if args.step == "open":
+                url = (wiki_site.SITE_DIR / "index.html").as_uri()
+                print(f"Opening {url}")
+                webbrowser.open(url)
+            return 0
         if args.step == "compile":
             def show(r):
                 print(f"{r['page']}: {r['status']}, {r['detail']}", flush=True)
@@ -419,6 +432,8 @@ def main():
     compiling.add_argument("--max", type=int, default=wiki_compile.MAX_PAGES,
                            help=f"at most this many pages (default {wiki_compile.MAX_PAGES})")
     pages.add_parser("status", help="pages, which are due, and the last compile runs")
+    pages.add_parser("build", help="build the static site now")
+    pages.add_parser("open", help="open the static site in the browser")
     args = parser.parse_args()
     if args.command == "google":
         return google_command(args)

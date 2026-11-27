@@ -31,6 +31,7 @@ import paths  # noqa: E402
 import retention  # noqa: E402
 import review  # noqa: E402
 import store  # noqa: E402
+import wiki_site  # noqa: E402
 from handlers import VERSION, Layer, RpcError  # noqa: E402
 from web import Frontend  # noqa: E402
 
@@ -65,6 +66,11 @@ async def scheduler():
                 await asyncio.to_thread(retention.run, paths.STORE_PATH)
         except Exception:
             log.exception("retention failed")
+        try:  # the wiki's static site, within a minute of any change it shows
+            if await asyncio.to_thread(wiki_site.rebuild_store, paths.STORE_PATH):
+                log.info("wiki site rebuilt")
+        except Exception:
+            log.exception("wiki site build failed")
         await asyncio.sleep(min(60, COLLECT_EVERY))
 
 

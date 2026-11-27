@@ -24,7 +24,7 @@ KNOWN_FIELDS = {
     # the wiki
     "page", "version", "stale", "built_from", "sections", "base_version", "path", "cite_as", "dry_run", "new",
     "claim_id", "summary", "key_terms", "overview", "status", "how-it-works", "lessons", "role", "key-facts",
-    "open-questions", "wiki",
+    "open-questions", "wiki", "type", "nodes", "edges",
 }
 # Section headings from the brief's appendix, in order.
 SECTIONS = {

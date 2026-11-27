@@ -124,6 +124,8 @@ def check_get_wiki_page(args, errors):
             errors.append(f"{name} filters the catalog, so it goes without page.")
     elif "sections" in args:
         errors.append("sections needs page: the page whose sections to read.")
+    if args.get("previews") and "sections" not in args:
+        errors.append("previews goes with sections: the sections whose diagrams to draw.")
 
 
 def check_read_repo(args, errors):
@@ -208,11 +210,26 @@ def check_wiki_update(args, errors):
             errors.append(f"{where} has {len(section['blocks'])} statements; a section has at most {SECTION_STATEMENTS}.")
         for j, block in enumerate(section["blocks"]):
             spot = f"{where}.blocks[{j}]"
-            check_wiki_text(block["text"], f"{spot}.text", errors)
-            if len(block["cites"]) > STATEMENT_CITES:
+            kinds = [k for k in ("text", "diagram", "image") if k in block]
+            if len(kinds) != 1:
+                errors.append(f"{spot} is one of: text (a statement), diagram, or image.")
+                continue
+            if "text" in block:
+                check_wiki_text(block["text"], f"{spot}.text", errors)
+            if "image" not in block and not block.get("cites"):
+                errors.append(f"{spot}.cites is required: every statement and diagram cites its evidence.")
+            cites = block.get("cites", [])
+            if len(cites) > STATEMENT_CITES:
                 errors.append(f"{spot}.cites has at most {STATEMENT_CITES} items.")
-            for k, cite in enumerate(block["cites"]):
+            for k, cite in enumerate(cites):
                 check_cite(cite, f"{spot}.cites[{k}]", errors)
-            if block["cites"] and all(c.keys() <= {"page", "section"} for c in block["cites"]):
+            if cites and all(c.keys() <= {"page", "section"} for c in cites):
                 errors.append(f"{spot} cites only pages. A page is a link, not evidence: also cite a claim, an "
                               "event, or a commit or file.")
+            if "diagram" in block:
+                for field in ("nodes", "items"):
+                    for k, item in enumerate(block["diagram"].get(field, [])):
+                        for m, cite in enumerate(item.get("cites", [])):
+                            check_cite(cite, f"{spot}.diagram.{field}[{k}].cites[{m}]", errors)
+            if "image" in block and len(block["image"].get("caption", "")) > SUMMARY_CHARS:
+                errors.append(f"{spot}.image.caption is at most {SUMMARY_CHARS} characters.")
