@@ -93,7 +93,10 @@ The labs' minimum, from Anthropic's November 2026 guidance: write down what's me
 
 1. **Check support, not existence** (G3):
    - **Narrower citations.** A file citation gains a line range, an event or message citation a short quote. Code checks that the quote is in the source.
-   - **A checker run.** After the end-of-day agent and after each compile run, a second headless run with no write tools reads each new claim or statement beside its evidence, and answers supported, contradicted or not found. It runs on a different model from the writer. Its verdict is stored per citation.
+   - **A checker run.** After the end-of-day agent and after each compile run, a second headless run reads each new claim or statement beside its evidence, and answers supported, contradicted or not found, with the passage that says so. Code checks that the passage is in the evidence; a verdict without one counts as not found.
+   - **The checker is another Claude model than the writer's,** pinned by id. It gets no tools: the layer hands it the claim and its quoted evidence, so text in the evidence can't make it do anything. Its verdict is stored per citation, marked *same family*, since a model checking its own family shares some of its blind spots.
+   - **Shadow mode first.** Its verdicts are stored and compared with my blind labels, and don't reorder my review until agreement passes the mark set in step 1.
+   - **Later, if my company allows the data to go there:** two checkers from other model families (a Google model and an OpenAI model, through GitHub Copilot CLI, reviewed and pinned). Both supported passes; both not found or contradicted goes to the top of my review; a disagreement comes to me with both verdicts. No third model reconciles them, since the disagreement is the signal.
    - **What happens next.** Not found and contradicted go to the top of my review and stay out of the wiki. The check is against the evidence itself, not the claim text: one study found citations 0.86 precise against a summary and 0.12 against the sources.
    - **Later, by measurement:** a small local model as the first pass for short quotes. In English they match a frontier grader (0.88 to 0.90 against 0.87); nothing tests them in Portuguese, so the claims set decides.
 2. **Record where evidence came from** (G7). Code, not Claude, sets an origin on each piece of evidence when it's saved: *mine* (my commits, my sessions, messages I sent, documents I edited), *others'* (messages and documents from other people, repository files by other authors), *web* (pages I visited). A summary can't raise it.
@@ -206,7 +209,7 @@ Three parts need nothing from step 1 and could go first: cleaning text (step 3.1
 
 ## Open questions
 
-- **Checker model.** Which model checks the writer's work, given one Team account: a different Claude model, or a local one?
+- **Checker model.** Decided for now: another Claude model than the writer's. Open: may claims and their evidence go to Google and OpenAI models through GitHub Copilot CLI, and does Copilot CLI run unattended with every tool off and a chosen model?
 - **The search log.** Is keeping every query acceptable under my company's policy, as the audit trail is?
 - **Planted wrong cards.** Do I want them?
 - **The MCP revision of 28 July 2026** removes the handshake and sessions. The service already works without a handshake per connection; when Claude Desktop for Linux moves to it, the bridge and `handlers.py` need checking.
